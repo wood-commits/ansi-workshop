@@ -15,6 +15,10 @@ import { AgentPanel } from './AgentPanel'
 import { executeAgentCommand } from './agentCommands'
 import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
+import editorLicense from '../LICENSE?raw'
+import { version } from '../package.json'
+
+const RELEASE_VERSION = version.split('.').slice(0, 2).join('.')
 
 const TOOL_ICONS = {
   draw: <path d="m16 3 5 5L8 21H3v-5ZM14 5l5 5" />,
@@ -88,10 +92,12 @@ export function App() {
   const [saving, setSaving] = useState(false)
   const [opening, setOpening] = useState(false)
   const [goRow, setGoRow] = useState('1')
-  const [openMenu, setOpenMenu] = useState<'File' | 'Edit' | 'Window' | 'Settings'>()
+  const [openMenu, setOpenMenu] = useState<'File' | 'Edit' | 'Window' | 'Settings' | 'Help'>()
+  const [dialogKind, setDialogKind] = useState<'font' | 'about'>('font')
   const menuBar = useRef<HTMLElement>(null)
-  const fontDialog = useRef<HTMLDialogElement>(null)
+  const infoDialog = useRef<HTMLDialogElement>(null)
   const settingsHeading = useRef<HTMLElement>(null)
+  const helpHeading = useRef<HTMLElement>(null)
   const fileHandle = useRef<AnsiFileHandle | undefined>(undefined)
   const abortSave = useRef<AbortController | undefined>(undefined)
   const abortOpen = useRef<AbortController | undefined>(undefined)
@@ -457,6 +463,13 @@ export function App() {
   const hoverMenu = (menu: typeof openMenu) => {
     setOpenMenu(previous => previous ? menu : undefined)
   }
+  const showInfo = (kind: typeof dialogKind) => {
+    setDialogKind(kind)
+    setOpenMenu(undefined)
+    infoDialog.current?.showModal()
+    const content = infoDialog.current?.querySelector<HTMLDivElement>('.info-dialog-content')
+    if (content) content.scrollTop = 0
+  }
 
   return <div className="app-shell" onKeyDown={historyKeyDown}>
     <header className="app-header">
@@ -516,17 +529,15 @@ export function App() {
           <p>Zoom, OS scaling, and the preview thumbnail can rescale screen pixels. Settings last until reload.</p>
           <p className="font-credit">IBM font by <a href="https://int10h.org/oldschool-pc-fonts/" target="_blank" rel="noreferrer">VileR</a> · CC BY-SA 4.0.
             {' '}Converted to a CP437 bitmap; glyph designs unchanged.</p>
-          <button className="font-notices-button" onClick={() => {
-            setOpenMenu(undefined)
-            fontDialog.current?.showModal()
-            const content = fontDialog.current?.querySelector<HTMLDivElement>('.font-dialog-content')
-            if (content) content.scrollTop = 0
-          }}>IBM font license and notices</button>
+          <button className="font-notices-button" onClick={() => showInfo('font')}>IBM font license and notices</button>
         </div>
       </details>
+      <details open={openMenu === 'Help'}><summary ref={helpHeading} onMouseEnter={() => hoverMenu('Help')} onClick={event => toggleMenu(event, 'Help')}>Help</summary><div className="menu-popup" onClick={closeMenu}>
+        <button onClick={() => showInfo('about')}>About ANSI Workshop</button>
+      </div></details>
       <div className="menu-hint">No cloud. No accounts. Just characters.</div>
     </nav>
-    <dialog ref={fontDialog} className="font-dialog" aria-labelledby="font-dialog-title"
+    <dialog ref={infoDialog} className="info-dialog" aria-labelledby="info-dialog-title"
       onKeyDown={event => {
         if (event.key === 'Escape') {
           event.preventDefault()
@@ -534,12 +545,22 @@ export function App() {
           event.currentTarget.close()
         }
       }}
-      onClose={() => settingsHeading.current?.focus()}>
-      <div className="font-dialog-header">
-        <h2 id="font-dialog-title">IBM font license and notices</h2>
-        <button autoFocus onClick={() => fontDialog.current?.close()}>Close</button>
+      onClose={() => (dialogKind === 'about' ? helpHeading : settingsHeading).current?.focus()}>
+      <div className="info-dialog-header">
+        <h2 id="info-dialog-title">{dialogKind === 'about' ? 'About ANSI Workshop' : 'IBM font license and notices'}</h2>
+        <button autoFocus onClick={() => infoDialog.current?.close()}>Close</button>
       </div>
-      <div className="font-dialog-content" tabIndex={0}>
+      <div className="info-dialog-content" tabIndex={0}>
+        {dialogKind === 'about' && <>
+          <h3>ANSI Workshop</h3>
+          <p>Version {RELEASE_VERSION}</p>
+          <p>A local-first, 80-column CP437 ANSI art editor. Artwork stays in your browser; there is no automatic persistence.</p>
+          <p><a href="https://github.com/wood-commits/ansi-workshop" target="_blank" rel="noreferrer">GitHub project</a>
+            {' '}&middot;{' '}<a href="https://wood-commits.github.io/ansi-workshop/" target="_blank" rel="noreferrer">Hosted static editor</a></p>
+          <h3>Editor license (MIT)</h3>
+          <pre aria-label="Full MIT license">{editorLicense}</pre>
+          <p>The MIT license covers the editor code, not the separately licensed font or third-party example artwork and reference images.</p>
+        </>}
         <h3>Font notices</h3>
         <pre aria-label="Font notices">{fontNotice}</pre>
         <h3>Full CC BY-SA 4.0 license</h3>

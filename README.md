@@ -5,6 +5,11 @@ and Node.js tooling. Inspired by the workflows of classic BBS art editors; no
 code or assets from those editors are included. The bundled IBM VGA font
 reproduction is separately licensed; see Font credits below.
 
+**[Open the hosted static editor](https://wood-commits.github.io/ansi-workshop/)**
+or browse the [GitHub project](https://github.com/wood-commits/ansi-workshop).
+Editing and file access remain in your browser; the hosted version has no
+uploads or automatic persistence. Agent access requires the local app.
+
 ## User guide
 
 Start with the [illustrated user guide](./docs/USER-GUIDE.md) for a first drawing,
@@ -73,12 +78,27 @@ environment. Pull requests run checks but cannot deploy. See the
 ### Source licensing
 
 The editor code is distributed under the [MIT license](./LICENSE).
+**Help > About ANSI Workshop** displays version **0.1**, the project and hosted
+editor links, the complete MIT license, and the font license and attribution.
+The About version follows the major/minor version in `package.json`.
 The bundled source font and derived bitmap remain under their separate
 [CC BY-SA 4.0 license](./src/assets/fonts/LICENSE.txt), with
 [attribution and notices](./src/assets/fonts/NOTICE.txt).
 Bundled ANSI example artwork and reference images are included with the project
 owner's redistribution permission; the editor's MIT license does not relicense
 those third-party assets.
+
+### Release 0.1
+
+Download the initial [GitHub release](https://github.com/wood-commits/ansi-workshop/releases/tag/v0.1)
+for the source archives or the static-build ZIP and its SHA-256 checksum.
+The ZIP contains the contents of `dist` at its root, plus the editor license
+and font notices. Upload the entire extracted directory to an HTTPS static
+host; it works at the site root or under a project subdirectory.
+It is not a desktop installer and should not be opened through `file://`.
+For local use, download the source archive and follow Run locally above.
+See [static hosting limitations](./SECURITY.md#static-hosting) for protections
+that require host-configured response headers.
 
 ## Editing
 

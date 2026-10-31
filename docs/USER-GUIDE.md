@@ -528,6 +528,13 @@ files. Agent access is supported only from the local editor, not a hosted copy.
 
 ### Screenshot and font credits
 
+**Help > About ANSI Workshop** shows version **0.1**, links to the
+[GitHub project](https://github.com/wood-commits/ansi-workshop) and
+[hosted static editor](https://wood-commits.github.io/ansi-workshop/), the full
+MIT editor license, and the complete font license and notices.
+Close or Escape dismisses the dialog and returns keyboard focus to Help.
+Opening About does not change artwork, undo history, or the document's saved state.
+
 Screenshots in this guide show artwork created in ANSI Workshop for this guide,
 using its bundled IBM VGA bitmap. The font is derived from Web437 IBM VGA 8x16
 by [VileR](https://int10h.org/oldschool-pc-fonts/), licensed under

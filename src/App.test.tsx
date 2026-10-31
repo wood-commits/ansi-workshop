@@ -10,6 +10,7 @@ import { rasterizeGradient, type GradientKind } from './gradient'
 import { bucketFill, type FillMode } from './fill'
 import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
+import editorLicense from '../LICENSE?raw'
 
 vi.mock('./open', () => ({ chooseAnsiFile: vi.fn() }))
 vi.mock('./import', () => ({ readAnsi: vi.fn() }))
@@ -1501,18 +1502,18 @@ describe('editor UI', () => {
   })
   it('opens only one application menu and toggles the active menu closed', () => {
     renderClassicEditor()
-    for (const name of ['File', 'Edit', 'Window', 'Settings']) {
+    for (const name of ['File', 'Edit', 'Window', 'Settings', 'Help']) {
       const summary = screen.getByText(name, { selector: 'summary' })
       fireEvent.click(summary)
       expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(1)
       expect(summary.closest('details')?.open).toBe(true)
     }
-    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    fireEvent.click(screen.getByText('Help', { selector: 'summary' }))
     expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
   })
   it('switches open menus on hover, but does not open menus from an idle hover', () => {
     renderClassicEditor()
-    const headings = ['File', 'Edit', 'Window', 'Settings'].map(name => screen.getByText(name, { selector: 'summary' }))
+    const headings = ['File', 'Edit', 'Window', 'Settings', 'Help'].map(name => screen.getByText(name, { selector: 'summary' }))
     for (const heading of headings) fireEvent.mouseEnter(heading)
     expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
     fireEvent.click(headings[0])
@@ -1550,6 +1551,42 @@ describe('editor UI', () => {
       expect(document.activeElement).toBe(settings)
       expect(screen.queryByText('untitled.ans *')).toBeNull()
     }
+  })
+  it('shows version 0.1, project links, and complete editor and font licenses in About without editing art', () => {
+    renderClassicEditor()
+    const help = screen.getByText('Help', { selector: 'summary' })
+    const settings = screen.getByText('Settings', { selector: 'summary' })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      fireEvent.click(help)
+      fireEvent.click(screen.getByRole('button', { name: 'About ANSI Workshop' }))
+      const dialog = screen.getByRole('dialog', { name: 'About ANSI Workshop' })
+      expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
+      expect(within(dialog).getByText('Version 0.1')).not.toBeNull()
+      const project = within(dialog).getByRole('link', { name: 'GitHub project' })
+      expect(project.getAttribute('href')).toBe('https://github.com/wood-commits/ansi-workshop')
+      expect(project.getAttribute('target')).toBe('_blank')
+      expect(project.getAttribute('rel')).toBe('noreferrer')
+      expect(within(dialog).getByRole('link', { name: 'Hosted static editor' }).getAttribute('href'))
+        .toBe('https://wood-commits.github.io/ansi-workshop/')
+      expect(within(dialog).getByLabelText('Full MIT license').textContent).toBe(editorLicense)
+      expect(within(dialog).getByLabelText('Font notices').textContent).toBe(fontNotice)
+      expect(within(dialog).getByLabelText('Full CC BY-SA 4.0 license').textContent).toBe(fontLicense)
+      const content = within(dialog).getByLabelText('Full MIT license').parentElement!
+      expect(content.scrollTop).toBe(0)
+      content.scrollTop = 100
+      if (attempt === 0) fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      else fireEvent.keyDown(content, { key: 'Escape' })
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(document.activeElement).toBe(help)
+      expect(screen.queryByText('untitled.ans *')).toBeNull()
+      expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    }
+    fireEvent.click(settings)
+    fireEvent.click(screen.getByRole('button', { name: 'IBM font license and notices' }))
+    const dialog = screen.getByRole('dialog', { name: 'IBM font license and notices' })
+    expect(within(dialog).queryByText('Version 0.1')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(document.activeElement).toBe(settings)
   })
   it('dismisses menus on outside pointer/focus and Escape, restoring trigger focus on Escape', () => {
     renderClassicEditor()

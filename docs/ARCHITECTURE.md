@@ -34,7 +34,7 @@ Reloading loses all in-memory state.
 | `src/Canvas.tsx` | Virtual viewport, pointer capture, wheel navigation, font dispatch, live preview |
 | `src/vgaFont.ts` | Deterministic CP437 pixel masks and bounded color/size glyph atlases |
 | `src/assets/ibm-vga-8x16.json` | CC BY-SA 4.0 bitmap derived from the bundled Web437 source, with provenance |
-| `src/assets/fonts/LICENSE.txt`, `src/assets/fonts/NOTICE.txt` | Full font license and attribution, imported as raw text for the Settings dialog |
+| `src/assets/fonts/LICENSE.txt`, `src/assets/fonts/NOTICE.txt` | Full font license and attribution, imported as raw text for Settings and About |
 | `scripts/generate-font.ts` | Offline verified WOFF-to-bitmap conversion using only Node built-ins |
 | `src/App.tsx` | React session state, commands, menus, keyboard dispatch, save status, unsaved-change protection |
 | `src/agentProtocol.ts` | Shared strict Zod command/result schemas and operation limits |
@@ -308,11 +308,15 @@ CC BY-SA 4.0 license, and a notice identifying the bitmap conversion.
 whole-pixel rectangular outlines, then evaluates pixel-center winding numbers.
 It requires no third-party font parser, browser font loading, network, or
 system installation. Font assets retain CC BY-SA independently of application code.
-Settings opens a native modal dialog with the complete notice and license
-imported as build-time raw text from the bundled font assets. Native modal
+Settings and Help share a native modal dialog. Settings shows the complete
+font notice and license imported as build-time raw text from the bundled font
+assets. Help's About view also includes the full MIT editor license, fixed
+project/hosted-site links, and the major/minor version from `package.json`.
+Native modal
 behavior confines focus; an explicit Escape handler also supports embedded
-browsers whose native dismissal is unavailable. Closing restores Settings heading
-focus. A bounded, keyboard-scrollable content pane contains the long texts.
+browsers whose native dismissal is unavailable. Closing restores the originating
+Settings or Help heading's focus. A bounded, keyboard-scrollable content pane
+contains the long texts. Opening either view leaves the document and history unchanged.
 No runtime fetch or root-relative text-file navigation is needed.
 Vite uses a relative base for self-contained static browser output, including
 project-subdirectory hosting. A build-only Vite HTML transform prepends a meta
