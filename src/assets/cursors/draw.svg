@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g id="icon"><path d="M3 1v4M1 3h4"/><path transform="translate(7 7)" d="m16 3 5 5L8 21H3v-5ZM14 5l5 5"/></g>
+  <use href="#icon" stroke="#000" stroke-width="4"/>
+  <use href="#icon" stroke="#fff" stroke-width="1.8"/>
+</svg>

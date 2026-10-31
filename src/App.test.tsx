@@ -1,0 +1,1578 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { App } from './App'
+import { chooseFile, writeAnsi } from './save'
+import { chooseAnsiFile } from './open'
+import { readAnsi } from './import'
+import { Editor, MAX_ROW, pointFromKey, type Cell } from './model'
+import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
+import { rasterizeGradient, type GradientKind } from './gradient'
+import { bucketFill, type FillMode } from './fill'
+import fontLicense from './assets/fonts/LICENSE.txt?raw'
+import fontNotice from './assets/fonts/NOTICE.txt?raw'
+
+vi.mock('./open', () => ({ chooseAnsiFile: vi.fn() }))
+vi.mock('./import', () => ({ readAnsi: vi.fn() }))
+
+vi.mock('./save', () => ({
+  hasNativeSave: () => true,
+  chooseFile: vi.fn(),
+  writeAnsi: vi.fn(),
+}))
+beforeEach(() => {
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: vi.fn(function (this: HTMLDialogElement) { this.open = true }) },
+    close: { configurable: true, value: vi.fn(function (this: HTMLDialogElement) {
+      this.open = false
+      this.dispatchEvent(new Event('close'))
+    }) },
+  })
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  Object.defineProperty(HTMLCanvasElement.prototype, 'setPointerCapture', { configurable: true, value: vi.fn() })
+  vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLCanvasElement) {
+    return new DOMRect(0, 0, this.width, this.height)
+  })
+  vi.mocked(chooseFile).mockResolvedValue({
+    name: 'test.ans',
+    createWritable: vi.fn(),
+  })
+  vi.mocked(writeAnsi).mockResolvedValue(undefined)
+  vi.mocked(chooseAnsiFile).mockResolvedValue({
+    file: new File(['test'], 'opened.ans'),
+    handle: { name: 'opened.ans', createWritable: vi.fn() },
+  })
+  vi.mocked(readAnsi).mockResolvedValue(new Map([
+    ['0,0', { code: 219, fg: 14, bg: 1 }],
+    ['79,2', { code: 32, fg: 3, bg: 1 }],
+  ]))
+})
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks() })
+const canvas = () => screen.getByLabelText(/^ANSI canvas/)
+const preview = () => screen.getByLabelText(/^Live VGA preview/)
+const press = (key: string, extra = {}) => fireEvent.keyDown(canvas(), { key, ...extra })
+function fileAction(action: 'open' | 'save') {
+  fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+  fireEvent.click(screen.getByRole('button', { name: action === 'open' ? /^Open…/ : /^Save Ctrl/ }))
+}
+async function saveSnapshot() {
+  fileAction('save')
+  await waitFor(() => expect(writeAnsi).toHaveBeenCalled())
+  return vi.mocked(writeAnsi).mock.calls.at(-1)![0]
+}
+function subtractionSnapshot(source: ReadonlyMap<string, Cell>, mask: ReadonlyMap<string, Cell>) {
+  const editor = new Editor(source)
+  for (const [id, cell] of subtractPrimitive(source, mask)) editor.paint(pointFromKey(id), cell)
+  editor.commit()
+  return new Map(editor.cells)
+}
+
+function renderClassicEditor() {
+  const result = render(<App />)
+  fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+  fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: 'classic' } })
+  fireEvent.keyDown(screen.getByLabelText('Canvas cell size'), { key: 'Escape' })
+  return result
+}
+
+it('shows a unique canvas pointer for every tool without changing preview navigation', () => {
+  render(<App />)
+  const pointers = new Set<string>()
+  for (const name of ['Draw', 'Cursor', 'Erase', 'Recolor', 'Select', 'Move', 'Primitive', 'Gradient', 'Fill', 'Eyedropper']) {
+    fireEvent.click(screen.getByRole('button', { name }))
+    const pointer = (canvas() as HTMLCanvasElement).style.cursor
+    expect(pointer).toMatch(/^url\(.+\) 3 3, /)
+    pointers.add(pointer)
+    expect((preview() as HTMLCanvasElement).style.cursor).toBe('')
+    expect(screen.getByRole('button', { name: /Undo/ }).hasAttribute('disabled')).toBe(true)
+  }
+  expect(pointers.size).toBe(10)
+  press('Escape')
+  expect(screen.getByRole('button', { name: 'Draw' }).getAttribute('aria-pressed')).toBe('true')
+  expect((canvas() as HTMLCanvasElement).style.cursor).toBe([...pointers][0])
+})
+
+it.each(['native', 'classic', 'double'])('maps the rightmost %s cell without including the right border', size => {
+  render(<App />)
+  fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+  fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: size } })
+  fireEvent.keyDown(screen.getByLabelText('Canvas cell size'), { key: 'Escape' })
+  const art = canvas() as HTMLCanvasElement
+  Object.defineProperties(art, {
+    offsetWidth: { configurable: true, value: art.width + 1 },
+    clientWidth: { configurable: true, value: art.width },
+  })
+  vi.spyOn(art, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, art.width + 1, art.height))
+  fireEvent.pointerDown(art, { button: 0, altKey: true, clientX: art.width - 0.1, clientY: 8 })
+  expect(art.getAttribute('aria-label')).toContain('column 80, row 1')
+  press('Home')
+  fireEvent.pointerDown(art, { button: 0, altKey: true, clientX: art.width + 0.5, clientY: 8 })
+  expect(art.getAttribute('aria-label')).toContain('column 1, row 1')
+})
+
+describe('canvas scrollbar', () => {
+  function scrollbar() {
+    const bar = screen.getByRole('scrollbar', { name: 'Canvas rows' })
+    vi.spyOn(bar, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 18, 400))
+    Object.defineProperty(bar, 'setPointerCapture', { configurable: true, value: vi.fn() })
+    return bar
+  }
+
+  it('pages and drags with a stable range without moving the cursor or editing art', () => {
+    render(<App />)
+    const bar = scrollbar()
+    expect(bar.getAttribute('aria-valuemax')).toBe('75')
+    fireEvent.pointerDown(bar, { button: 0, clientY: 350 })
+    expect(bar.getAttribute('aria-valuenow')).toBe('25')
+    expect(preview().getAttribute('aria-label')).toContain('rows 26 through 85')
+    const thumb = bar.firstElementChild!
+    fireEvent.pointerDown(thumb, { button: 0, clientY: 100 })
+    const maximum = bar.getAttribute('aria-valuemax')
+    fireEvent.pointerMove(bar, { clientY: 250 })
+    expect(bar.getAttribute('aria-valuenow')).toBe('72')
+    expect(bar.getAttribute('aria-valuemax')).toBe(maximum)
+    fireEvent.pointerUp(bar, { clientY: 250 })
+    expect(Number(bar.getAttribute('aria-valuemax'))).toBeGreaterThan(Number(maximum))
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    expect(screen.getByRole('button', { name: /Undo/ }).hasAttribute('disabled')).toBe(true)
+    expect(canvas().getAttribute('height')).toBe('400')
+  })
+
+  it('supports keyboard navigation and stops dragging on cancellation and focus loss', () => {
+    render(<App />)
+    const bar = scrollbar()
+    fireEvent.keyDown(bar, { key: 'PageDown' })
+    expect(bar.getAttribute('aria-valuenow')).toBe('25')
+    fireEvent.keyDown(bar, { key: 'ArrowUp' })
+    expect(bar.getAttribute('aria-valuenow')).toBe('24')
+    fireEvent.keyDown(bar, { key: 'Home' })
+    expect(bar.getAttribute('aria-valuenow')).toBe('0')
+    for (const stop of ['pointerCancel', 'lostPointerCapture', 'blur'] as const) {
+      fireEvent.pointerDown(bar.firstElementChild!, { button: 0, clientY: 50 })
+      fireEvent[stop](bar)
+      fireEvent.pointerMove(bar, { clientY: 350 })
+      expect(bar.getAttribute('aria-valuenow')).toBe('0')
+    }
+  })
+
+  it('blocks scrollbar input during live shape placement', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 46, clientY: 8 })
+    fireEvent.pointerMove(canvas(), { clientX: 78, clientY: 40 })
+    const bar = scrollbar()
+    expect(bar.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.pointerDown(bar, { button: 0, clientY: 350 })
+    fireEvent.keyDown(bar, { key: 'PageDown' })
+    expect(bar.getAttribute('aria-valuenow')).toBe('0')
+    press('Escape')
+    expect(bar.getAttribute('aria-disabled')).toBe('false')
+    fireEvent.keyDown(bar, { key: 'PageDown' })
+    expect(bar.getAttribute('aria-valuenow')).toBe('25')
+  })
+
+  it('covers sparse distant art and safe-boundary navigation without a tall DOM element', async () => {
+    vi.mocked(readAnsi).mockResolvedValue(new Map([
+      ['0,1000000000', { code: 219, fg: 7, bg: 0 }],
+    ]))
+    render(<App />)
+    fileAction('open')
+    await waitFor(() => expect(screen.getByRole('scrollbar').getAttribute('aria-valuemax')).toBe('1000000075'))
+    const bar = scrollbar()
+    fireEvent.keyDown(bar, { key: 'End' })
+    expect(bar.getAttribute('aria-valuenow')).toBe('1000000075')
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: String(MAX_ROW) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.keyDown(bar, { key: 'End' })
+    fireEvent.keyDown(bar, { key: 'ArrowDown' })
+    expect(bar.getAttribute('aria-valuenow')).toBe(String(MAX_ROW))
+    expect(bar.getAttribute('aria-valuemax')).toBe(String(MAX_ROW))
+    expect(canvas().getAttribute('height')).toBe('400')
+    expect(bar.children).toHaveLength(1)
+    expect(await saveSnapshot()).toEqual(new Map([
+      ['0,1000000000', { code: 219, fg: 7, bg: 0 }],
+    ]))
+  })
+})
+
+describe('display defaults', () => {
+  it('keeps document surfaces distinct without React warnings across edits, preview toggles, New and Open', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    render(<App />)
+    expect(errors).not.toHaveBeenCalled()
+    const initialCanvas = canvas()
+    const initialPreview = preview()
+    const ownerKey = screen.getByLabelText(/^Owner key/)
+    fireEvent.change(ownerKey, { target: { value: 'unsubmitted-key' } })
+    press('F4'); press('ArrowRight'); press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide VGA Preview' }))
+    expect(screen.queryByLabelText(/^Live VGA preview/)).toBeNull()
+    expect(ownerKey).toHaveProperty('value', 'unsubmitted-key')
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show VGA Preview' }))
+    expect(screen.getAllByLabelText(/^Live VGA preview/)).toHaveLength(1)
+    expect(canvas()).toBe(initialCanvas)
+    expect(screen.getByLabelText(/^Owner key/)).toBe(ownerKey)
+    press('n', { ctrlKey: true })
+    expect(canvas()).not.toBe(initialCanvas)
+    expect(preview()).not.toBe(initialPreview)
+    expect(screen.getAllByLabelText(/^Owner key/)).toHaveLength(1)
+    expect(screen.getByLabelText(/^Owner key/)).toHaveProperty('value', '')
+    const newCanvas = canvas()
+    const newPreview = preview()
+    fileAction('open')
+    await waitFor(() => expect(canvas()).not.toBe(newCanvas))
+    expect(preview()).not.toBe(newPreview)
+    expect(screen.getAllByLabelText(/^Live VGA preview/)).toHaveLength(1)
+    expect(screen.getAllByLabelText(/^Owner key/)).toHaveLength(1)
+    expect(errors).not.toHaveBeenCalled()
+    expect(warnings).not.toHaveBeenCalled()
+  })
+
+  it('focuses either canvas without moving the page during a pointer stroke', () => {
+    render(<App />)
+    const artFocus = vi.spyOn(canvas(), 'focus')
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 46, clientY: 8 })
+    expect(artFocus).toHaveBeenCalledWith({ preventScroll: true })
+    fireEvent.pointerUp(canvas())
+    const previewFocus = vi.spyOn(preview(), 'focus')
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 4, clientY: 8 })
+    expect(previewFocus).toHaveBeenCalledWith({ preventScroll: true })
+    fireEvent.pointerUp(preview())
+  })
+
+  it.each([0, 15])('reserves an 80-by-25 terminal view in 2x mode with a %i-pixel scrollbar', scrollbarHeight => {
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(scrollbarHeight)
+    vi.stubGlobal('ResizeObserver', class {
+      private resize: (entries: { contentRect: { height: number } }[]) => void
+      constructor(callback: (entries: { contentRect: { height: number } }[]) => void) { this.resize = callback }
+      observe(element: HTMLElement) {
+        const height = element.style.minHeight ? Number.parseInt(element.style.minHeight) - scrollbarHeight : 320
+        this.resize([{ contentRect: { height } }])
+      }
+      unobserve() {}
+      disconnect() {}
+    })
+    render(<App />)
+    expect(canvas().getAttribute('height')).toBe('288')
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: 'double' } })
+    expect(canvas().parentElement?.style.minHeight).toBe(`${825 + scrollbarHeight}px`)
+    expect(canvas().getAttribute('width')).toBe('1322')
+    expect(canvas().getAttribute('height')).toBe('800')
+    expect(screen.getByText(/^Rows 1–25/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: 'native' } })
+    expect(canvas().parentElement?.style.minHeight).toBe('')
+    expect(canvas().getAttribute('height')).toBe('288')
+  })
+
+  it.each([
+    ['native', 16, 585, 0, 35],
+    ['classic', 20, 605, 15, 29],
+    ['double', 32, 825, 0, 25],
+    ['double', 32, 825, 15, 25],
+  ] as const)('fits complete %s rows flush beneath the ruler with a %i-pixel cell height', (size, cellHeight, contentHeight, scrollbarHeight, rows) => {
+    let resize: (entries: { contentRect: { height: number } }[]) => void = () => {}
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(scrollbarHeight)
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: typeof resize) { resize = callback }
+      observe() {}
+      disconnect() {}
+    })
+    render(<App />)
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: size } })
+    act(() => resize([{ contentRect: { height: contentHeight } }]))
+    const host = canvas().parentElement!
+    expect(host.style.getPropertyValue('--cell-height')).toBe(`${cellHeight}px`)
+    expect(host.style.getPropertyValue('--scrollbar-height')).toBe(`${scrollbarHeight}px`)
+    expect(Number(canvas().getAttribute('height')) + 25).toBe(contentHeight)
+    expect(screen.getByText((_, element) => element?.textContent === `Rows 1–${rows} · wheel to scroll`)).toBeTruthy()
+  })
+
+  it('starts with IBM VGA pixel-perfect cells and uses native pointer coordinates', async () => {
+    render(<App />)
+    expect(canvas().getAttribute('data-font')).toBe('ibm-vga')
+    expect(canvas().getAttribute('width')).toBe('682')
+    expect(canvas().getAttribute('height')).toBe('400')
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    expect(screen.getByLabelText('Canvas font')).toHaveProperty('value', 'ibm-vga')
+    expect(screen.getByLabelText('Canvas cell size')).toHaveProperty('value', 'native')
+    expect(within(screen.getByLabelText('Canvas cell size')).getByRole('option', { name: '1.25× (10×20)' })).toHaveProperty('value', 'classic')
+    fireEvent.keyDown(screen.getByLabelText('Canvas cell size'), { key: 'Escape' })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 62, clientY: 40 })
+    fireEvent.pointerUp(canvas())
+    expect(canvas().getAttribute('aria-label')).toContain('column 3, row 3')
+    press('ArrowRight')
+    press('A')
+    expect(await saveSnapshot()).toEqual(new Map([
+      ['2,2', { code: 219, fg: 7, bg: 0 }],
+      ['3,2', { code: 65, fg: 7, bg: 0 }],
+    ]))
+  })
+})
+
+describe('editor UI', () => {
+  it('configures cell size and font without editing art or resetting navigation/history', async () => {
+    renderClassicEditor()
+    press('F4')
+    press('ArrowDown')
+    const sizes = [['native', 8, 16], ['double', 16, 32], ['classic', 10, 20]] as const
+    for (const [value, width, height] of sizes) {
+      fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+      fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value } })
+      expect(canvas().getAttribute('width')).toBe(String(42 + 80 * width))
+      expect(canvas().getAttribute('height')).toBe(String(25 * height))
+      expect(canvas().getAttribute('aria-label')).toContain('column 2, row 2')
+      expect(preview().getAttribute('width')).toBe('640')
+      expect(preview().getAttribute('height')).toBe('960')
+      expect(document.querySelector('.column-ruler')?.getAttribute('style')).toContain(`${43 + 80 * width}px`)
+      fireEvent.change(screen.getByLabelText('Canvas font'), { target: { value: 'consolas' } })
+      expect(canvas().getAttribute('data-font')).toBe('consolas')
+      expect(preview().getAttribute('data-font')).toBe('consolas')
+      fireEvent.change(screen.getByLabelText('Canvas font'), { target: { value: 'ibm-vga' } })
+      expect(canvas().getAttribute('data-font')).toBe('ibm-vga')
+      fireEvent.keyDown(screen.getByLabelText('Canvas font'), { key: 'Escape' })
+      fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + 2.5 * width, clientY: 2.5 * height })
+      fireEvent.pointerUp(canvas())
+      expect(canvas().getAttribute('aria-label')).toContain('column 3, row 3')
+      press('z', { ctrlKey: true })
+      press('ArrowUp'); press('ArrowLeft')
+      expect(canvas().getAttribute('aria-label')).toContain('column 2, row 2')
+    }
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 219, fg: 7, bg: 0 }]]))
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    expect(screen.getByRole('link', { name: 'VileR' }).getAttribute('href')).toBe('https://int10h.org/oldschool-pc-fonts/')
+    expect(screen.getByRole('button', { name: 'IBM font license and notices' })).not.toBeNull()
+  })
+
+  it('reuses both art rasters for cursor-only movement, including an unchanged selection', () => {
+    const ctx = {
+      fillStyle: '#aaa', clearRect: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), drawImage: vi.fn(),
+      strokeRect: vi.fn(), createPattern: vi.fn(() => ({ setTransform: vi.fn() })),
+      beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+      putImageData: vi.fn(),
+      createImageData: vi.fn<(width: number | ImageData, height?: number) => ImageData>().mockImplementation((width, height) => {
+        const w = typeof width === 'number' ? width : width.width
+        const h = typeof width === 'number' ? height! : width.height
+        return { width: w, height: h, colorSpace: 'srgb', data: new Uint8ClampedArray(w * h * 4) }
+      }),
+    }
+    const context: Partial<CanvasRenderingContext2D> = ctx
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context as CanvasRenderingContext2D)
+    const reads = vi.spyOn(Editor.prototype, 'cell')
+    renderClassicEditor()
+    reads.mockClear(); ctx.drawImage.mockClear(); ctx.fillRect.mockClear()
+    press('ArrowDown'); press('ArrowUp')
+    expect(reads.mock.calls.length).toBe(0)
+    expect(ctx.fillRect.mock.calls.length).toBe(0)
+    expect(ctx.drawImage).toHaveBeenCalledTimes(4)
+    expect(canvas().getAttribute('aria-label')).toContain('row 1')
+    press('F1')
+    expect(reads).toHaveBeenCalled()
+    reads.mockClear()
+    press('ArrowRight', { shiftKey: true })
+    expect(reads).toHaveBeenCalled()
+    reads.mockClear()
+    press('ArrowDown')
+    expect(reads.mock.calls.length).toBe(0)
+    press('z', { ctrlKey: true })
+    expect(reads).toHaveBeenCalled()
+    reads.mockClear()
+    fireEvent.wheel(canvas(), { deltaY: 100 })
+    expect(reads).toHaveBeenCalled()
+    reads.mockClear()
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: '1000000001' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(6800)
+    expect(canvas().getAttribute('height')).toBe('500')
+    reads.mockClear()
+    press('ArrowRight')
+    expect(reads.mock.calls.length).toBe(0)
+  })
+
+  it('omits cell grid controls while preserving the Window preview toggle', () => {
+    render(<App />)
+    expect(screen.queryByRole('checkbox', { name: 'Grid' })).toBeNull()
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    expect(screen.queryByRole('button', { name: /cell grid/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide VGA Preview' }))
+    expect(screen.queryByLabelText(/^Live VGA preview/)).toBeNull()
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show VGA Preview' }))
+    expect(preview()).toBeTruthy()
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+  })
+
+  it('keeps file actions in the File menu instead of duplicating them in the toolbar', async () => {
+    const { container } = renderClassicEditor()
+    const toolbar = within(container.querySelector('.toolbar')!)
+    expect(toolbar.queryByRole('button', { name: 'Open ANSI' })).toBeNull()
+    expect(toolbar.queryByRole('button', { name: 'Save screen' })).toBeNull()
+    fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+    expect(screen.getByRole('button', { name: /^Open…/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Save Ctrl/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Save As…/ }))
+    await waitFor(() => expect(writeAnsi).toHaveBeenCalledOnce())
+    expect(chooseFile).toHaveBeenCalledWith('untitled.ans')
+  })
+
+  it('gives every drawing tool a decorative icon and an accessible text label', () => {
+    renderClassicEditor()
+    for (const name of ['Draw', 'Cursor', 'Erase', 'Recolor', 'Select', 'Move', 'Primitive', 'Gradient', 'Fill', 'Eyedropper']) {
+      const button = screen.getByRole('button', { name })
+      const icon = button.querySelector('svg')
+      expect(icon?.getAttribute('aria-hidden')).toBe('true')
+      expect(icon?.getAttribute('focusable')).toBe('false')
+      fireEvent.click(button)
+      expect(button.getAttribute('aria-pressed')).toBe('true')
+      expect(screen.getByRole('group', { name: 'Tool options' })).toBeTruthy()
+    }
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+  })
+
+  it('moves a multicolor connected shape with a nonmutating preview, final release coordinates, and one undo step', async () => {
+    const source = new Map([
+      ['1,1', { code: 219, fg: 14, bg: 0 }], ['2,1', { code: 223, fg: 4, bg: 2 }],
+      ['1,2', { code: 32, fg: 7, bg: 3 }], ['3,3', { code: 65, fg: 2, bg: 0 }],
+      ['6,4', { code: 66, fg: 3, bg: 0 }],
+    ])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    const paint = vi.spyOn(Editor.prototype, 'paint')
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 57, clientY: 25 })
+    fireEvent.pointerMove(canvas(), { clientX: 77, clientY: 65 })
+    press('F4'); press('z', { ctrlKey: true }); press('ArrowRight')
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    expect(paint).not.toHaveBeenCalled()
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    fireEvent.wheel(canvas(), { deltaY: 100 })
+    expect(screen.getByText(/^Rows 1–/)).toBeTruthy()
+    fireEvent.pointerUp(canvas(), { clientX: 97, clientY: 85 })
+    const expected = new Map([
+      ['5,4', source.get('1,1')!], ['6,4', source.get('2,1')!], ['5,5', source.get('1,2')!],
+      ['3,3', source.get('3,3')!],
+    ])
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+  })
+
+  it('moves art at distant rows and clamps the whole shape at the left edge', async () => {
+    const row = 1_000_000_000
+    const source = new Map([
+      [`1,${row}`, { code: 219, fg: 14, bg: 0 }], [`2,${row}`, { code: 223, fg: 4, bg: 2 }],
+      ['79,0', { code: 65, fg: 2, bg: 0 }],
+    ])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: String(row + 1) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 5 })
+    fireEvent.pointerUp(canvas(), { clientX: 47, clientY: 65 })
+    expect(await saveSnapshot()).toEqual(new Map([
+      [`0,${row + 3}`, source.get(`1,${row}`)!], [`1,${row + 3}`, source.get(`2,${row}`)!],
+      ['79,0', source.get('79,0')!],
+    ]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+  })
+
+  it.each(['Escape', 'cancel', 'lost capture', 'blur'])('cancels a shape move on %s without changing art or redo', async action => {
+    renderClassicEditor()
+    press('A'); press('B'); press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 5 })
+    fireEvent.pointerMove(canvas(), { clientX: 87, clientY: 65 })
+    if (action === 'Escape') press('Escape')
+    if (action === 'cancel') fireEvent.pointerCancel(canvas())
+    if (action === 'lost capture') fireEvent.lostPointerCapture(canvas())
+    if (action === 'blur') fireEvent.blur(window)
+    fireEvent.pointerUp(canvas(), { clientX: 87, clientY: 65 })
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 65, fg: 7, bg: 0 }]]))
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    press('y', { ctrlKey: true })
+    expect((await saveSnapshot()).get('1,0')?.code).toBe(66)
+  })
+
+  it('keeps click-only moves and blank targets out of history and preserves Alt+click navigation', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderClassicEditor()
+    press('A'); press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 5 })
+    expect(screen.getByRole('alert').textContent).toContain('painted cell')
+    fireEvent.pointerUp(canvas(), { clientX: 47, clientY: 5 })
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    press('y', { ctrlKey: true }); press('z', { ctrlKey: true }); press('y', { ctrlKey: true })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 5 })
+    fireEvent.pointerUp(canvas(), { clientX: 47, clientY: 5 })
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 77, clientY: 45, altKey: true })
+    fireEvent.pointerMove(canvas(), { clientX: 97, clientY: 85 })
+    fireEvent.pointerUp(canvas(), { clientX: 97, clientY: 85 })
+    expect(canvas().getAttribute('aria-label')).toContain('column 4, row 3')
+    expect(screen.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed')).toBe('true')
+    press('F4')
+    expect(await saveSnapshot()).toEqual(new Map([['3,2', { code: 219, fg: 7, bg: 0 }]]))
+  })
+
+  it.each<FillMode>(['shape', 'enclosed'])('fills in %s mode once per click, independent of the brush and BG, with single-step undo', async mode => {
+    const source = new Map(rasterizePrimitive(mode === 'shape' ? 'ellipse' : 'rectangle', mode === 'shape',
+      { x: 0, y: 0 }, { x: 12, y: 6 }, 0, { fg: 7, bg: 2 }))
+    source.set('20,0', { code: 219, fg: 4, bg: 0 })
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByTitle('F1: CP437 176'))
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Yellow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Background Blue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }))
+    fireEvent.change(screen.getByLabelText('Fill behavior'), { target: { value: mode } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 87, clientY: 65 })
+    fireEvent.pointerMove(canvas(), { clientX: 247, clientY: 5 })
+    fireEvent.pointerUp(canvas())
+    expect(canvas().setPointerCapture).not.toHaveBeenCalled()
+    const expected = new Map(source)
+    for (const [id, cell] of bucketFill(source, { x: 4, y: 3 }, mode, 14)) expected.set(id, cell)
+    expect(screen.getByRole('status').textContent).toContain('connected cells with Yellow')
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+  })
+
+  it('reports an unenclosed bucket target without editing or disturbing redo', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderClassicEditor()
+    press('A')
+    press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }))
+    fireEvent.change(screen.getByLabelText('Fill behavior'), { target: { value: 'enclosed' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 87, clientY: 65 })
+    fireEvent.pointerMove(canvas(), { clientX: 107, clientY: 85 })
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByRole('alert').textContent).toContain('not enclosed')
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(new Map())
+    fireEvent.change(screen.getByLabelText('Fill behavior'), { target: { value: 'shape' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 87, clientY: 65 })
+    expect(screen.getByRole('alert').textContent).toContain('existing painted cell')
+  })
+
+  it.each([
+    { label: 'painted half block', x: 0, fg: 'Yellow', bg: 'Cyan', indexes: { fg: 14, bg: 3 } },
+    { label: 'default blank', x: 1, fg: 'Light gray', bg: 'Black', indexes: { fg: 7, bg: 0 } },
+  ])('picks both colors from a $label once without changing glyph, art, or history', async ({ x, fg, bg, indexes }) => {
+    const source = new Map([['0,0', { code: 223, fg: 14, bg: 3 }], ['20,0', { code: 219, fg: 4, bg: 1 }]])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    press('A')
+    press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByTitle('F1: CP437 176'))
+    fireEvent.click(screen.getByRole('button', { name: 'Eyedropper' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47 + x * 10, clientY: 5 })
+    fireEvent.pointerMove(canvas(), { clientX: 247, clientY: 5 })
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByRole('button', { name: `Foreground ${fg}` }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: `Background ${bg}` }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText('CP437 176')).toBeTruthy()
+    expect(document.activeElement).toBe(canvas())
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    expect(await saveSnapshot()).toEqual(source)
+    press('F1')
+    expect((await saveSnapshot()).get(`${x},0`)).toEqual({ code: 176, ...indexes })
+  })
+
+  it.each<GradientKind>(['linear', 'radial'])('previews a %s gradient and commits its final line in one undo step', async kind => {
+    const source = rasterizePrimitive('ellipse', true, { x: 0, y: 0 }, { x: 12, y: 6 }, 0, { fg: 7, bg: 0 })
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Yellow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Background Blue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Gradient' }))
+    fireEvent.change(screen.getByLabelText('Gradient type'), { target: { value: kind } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 41 })
+    fireEvent.pointerMove(canvas(), { clientX: 107, clientY: 41 })
+    press('F1')
+    press('A')
+    press('ArrowRight', { ctrlKey: true })
+    fireEvent.wheel(canvas(), { deltaY: 100 })
+    press('s', { ctrlKey: true })
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 07 ROW 03')
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(writeAnsi).not.toHaveBeenCalled()
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    fireEvent.pointerUp(canvas(), { clientX: 127, clientY: 41 })
+    const result = await saveSnapshot()
+    expect(result).toEqual(rasterizeGradient(source, kind, { x: 2, y: 2 }, { x: 8, y: 2 }, { fg: 14, bg: 1 }))
+    const halves = [...source].filter(([, cell]) => cell.code !== 219)
+    expect(halves.length).toBeGreaterThan(0)
+    for (const [id, cell] of halves) {
+      expect(result.get(id)).toMatchObject({ code: cell.code, bg: cell.bg })
+      expect([14, 1]).toContain(result.get(id)?.fg)
+    }
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(result)
+  })
+
+  it.each(['pointercancel', 'lostpointercapture', 'blur', 'window blur', 'escape'])('discards a gradient on %s and preserves redo', async event => {
+    renderClassicEditor()
+    press('F4')
+    press('A')
+    press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Gradient' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 107, clientY: 81 })
+    if (event === 'escape') press('Escape')
+    else if (event === 'window blur') fireEvent(window, new Event('blur'))
+    else if (event === 'blur') fireEvent.blur(canvas())
+    else fireEvent(canvas(), new MouseEvent(event, { bubbles: true }))
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByRole('status').textContent).toContain('Gradient canceled')
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 219, fg: 7, bg: 0 }]]))
+    press('y', { ctrlKey: true })
+    expect((await saveSnapshot()).get('1,0')?.code).toBe(65)
+  })
+
+  it('reports an empty gradient target and leaves click-only gestures unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderClassicEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Gradient' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 1 })
+    fireEvent.pointerUp(canvas(), { clientX: 107, clientY: 81 })
+    expect(screen.getByRole('alert').textContent).toContain('existing painted cell')
+    expect(consoleError).toHaveBeenCalledWith('ANSI Workshop:', expect.objectContaining({ message: 'Start on an existing painted cell.' }))
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    press('F4')
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 1 })
+    fireEvent.pointerUp(canvas(), { clientX: 47, clientY: 1 })
+    expect(screen.getByRole('status').textContent).toContain('Gradient unchanged')
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 219, fg: 7, bg: 0 }]]))
+  })
+
+  it.each<PrimitiveKind>(['rectangle', 'ellipse', 'rounded-rectangle', 'star'])('subtracts filled and outlined %s using the captured mode, final release position, and original art colors', async kind => {
+    const source = rasterizePrimitive('rectangle', true, { x: 0, y: 0 }, { x: 79, y: 24 }, 0, { fg: 14, bg: 1 })
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Light red' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Background Green' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.change(screen.getByLabelText('Primitive shape'), { target: { value: kind } })
+    for (const filled of [true, false]) {
+      fireEvent.change(screen.getByLabelText('Primitive mode'), { target: { value: 'subtract' } })
+      fireEvent.change(screen.getByLabelText('Primitive style'), { target: { value: filled ? 'filled' : 'outline' } })
+      const savedCalls = vi.mocked(writeAnsi).mock.calls.length
+      fireEvent.pointerDown(canvas(), { button: 0, clientX: 147, clientY: 101 })
+      fireEvent.pointerMove(canvas(), { clientX: 347, clientY: 301 })
+      expect(screen.getByRole('status').textContent).toContain('Subtraction preview')
+      expect(screen.queryByText('opened.ans *')).toBeNull()
+      expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+      press('A')
+      press('s', { ctrlKey: true })
+      press('z', { ctrlKey: true })
+      expect(vi.mocked(writeAnsi).mock.calls.length).toBe(savedCalls)
+      fireEvent.change(screen.getByLabelText('Primitive mode'), { target: { value: 'draw' } })
+      fireEvent.pointerUp(canvas(), { clientX: 367, clientY: 321 })
+      expect(screen.getByRole('status').textContent).toContain('Primitive subtracted')
+      const mask = rasterizePrimitive(kind, filled, { x: 10, y: 5 }, { x: 32, y: 16 }, 0, { fg: 12, bg: 2 })
+      const result = await saveSnapshot()
+      expect(result).toEqual(subtractionSnapshot(source, mask))
+      expect(result.size).toBeLessThan(source.size)
+      expect([...result.values()].every(cell => cell.fg === 14)).toBe(true)
+      press('z', { ctrlKey: true })
+      expect(await saveSnapshot()).toEqual(source)
+      press('y', { ctrlKey: true })
+      expect(await saveSnapshot()).toEqual(result)
+      press('z', { ctrlKey: true })
+      await saveSnapshot()
+    }
+  })
+
+  it.each(['pointercancel', 'lostpointercapture', 'blur', 'window blur', 'escape'])('discards a subtraction preview on %s without changing art or redo', async event => {
+    const source = rasterizePrimitive('rectangle', true, { x: 0, y: 0 }, { x: 40, y: 18 }, 0, { fg: 14, bg: 1 })
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    press('A')
+    press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.change(screen.getByLabelText('Primitive mode'), { target: { value: 'subtract' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 147, clientY: 101 })
+    fireEvent.pointerMove(canvas(), { clientX: 347, clientY: 301 })
+    if (event === 'escape') press('Escape')
+    else if (event === 'window blur') fireEvent(window, new Event('blur'))
+    else if (event === 'blur') fireEvent.blur(canvas())
+    else fireEvent(canvas(), new MouseEvent(event, { bubbles: true }))
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(source)
+  })
+
+  it('rotates a subtractive mask and leaves empty-canvas subtraction out of history', async () => {
+    renderClassicEditor()
+    press('A')
+    press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.change(screen.getByLabelText('Primitive mode'), { target: { value: 'subtract' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 247, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 447, clientY: 401 })
+    fireEvent.pointerMove(canvas(), { clientX: 537, clientY: 401, altKey: true })
+    expect(screen.getByRole('status').textContent).toContain('90 degrees')
+    fireEvent.pointerUp(canvas(), { clientX: 537, clientY: 401 })
+    expect(screen.getByRole('status').textContent).toContain('Subtraction unchanged')
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(new Map())
+  })
+
+  it('commits a rotated subtraction using the preview geometry rather than its bounding box', async () => {
+    const source = rasterizePrimitive('rectangle', true, { x: 0, y: 0 }, { x: 79, y: 24 }, 0, { fg: 14, bg: 1 })
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.change(screen.getByLabelText('Primitive mode'), { target: { value: 'subtract' } })
+    fireEvent.change(screen.getByLabelText('Primitive shape'), { target: { value: 'ellipse' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 247, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 447, clientY: 401 })
+    fireEvent.pointerMove(canvas(), { clientX: 492, clientY: 401, altKey: true })
+    fireEvent.pointerUp(canvas(), { clientX: 492, clientY: 401 })
+    const mask = rasterizePrimitive('ellipse', true, { x: 20, y: 10 }, { x: 40, y: 20 }, Math.PI / 4, { fg: 7, bg: 0 })
+    expect(await saveSnapshot()).toEqual(subtractionSnapshot(source, mask))
+  })
+
+  it('previews primitives without editing, then commits the release position in one undo step', async () => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 147, clientY: 101 })
+    fireEvent.pointerMove(canvas(), { clientX: 207, clientY: 181 })
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    fireEvent.pointerUp(canvas(), { clientX: 227, clientY: 201 })
+    const cells = await saveSnapshot()
+    expect(cells.size).toBe(9 * 6)
+    expect([...cells.values()].every(cell => cell.code === 219)).toBe(true)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(cells)
+  })
+
+  it.each(['pointercancel', 'lostpointercapture', 'blur', 'window blur', 'escape'])('discards a primitive preview on %s', async event => {
+    renderClassicEditor()
+    press('A')
+    press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 147, clientY: 101 })
+    fireEvent.pointerMove(canvas(), { clientX: 207, clientY: 181 })
+    if (event === 'escape') press('Escape')
+    else if (event === 'window blur') fireEvent(window, new Event('blur'))
+    else if (event === 'blur') fireEvent.blur(canvas())
+    else fireEvent(canvas(), new MouseEvent(event, { bubbles: true }))
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(new Map())
+  })
+
+  it.each<PrimitiveKind>(['rectangle', 'ellipse', 'rounded-rectangle', 'star'])('places filled and outlined %s using the captured colors, not the brush palette', async kind => {
+    renderClassicEditor()
+    fireEvent.change(screen.getByLabelText('Function key character set'), { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Yellow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Background Blue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.change(screen.getByLabelText('Primitive shape'), { target: { value: kind } })
+    for (const filled of [true, false]) {
+      fireEvent.change(screen.getByLabelText('Primitive style'), { target: { value: filled ? 'filled' : 'outline' } })
+      fireEvent.pointerDown(canvas(), { button: 0, clientX: 147, clientY: 101 })
+      fireEvent.pointerMove(canvas(), { clientX: 347, clientY: 301 })
+      press('A')
+      press('F1')
+      press('ArrowRight', { ctrlKey: true })
+      expect(screen.queryByText('untitled.ans *')).toBeNull()
+      fireEvent.pointerUp(canvas(), { clientX: 347, clientY: 301 })
+      expect(await saveSnapshot()).toEqual(rasterizePrimitive(kind, filled, { x: 10, y: 5 }, { x: 30, y: 15 }, 0, { fg: 14, bg: 1 }))
+      press('z', { ctrlKey: true })
+    }
+  })
+
+  it('freezes primitive size during Alt rotation and keeps Alt+click cursor navigation', async () => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Primitive' }))
+    fireEvent.change(screen.getByLabelText('Primitive shape'), { target: { value: 'star' } })
+    fireEvent.change(screen.getByLabelText('Primitive style'), { target: { value: 'outline' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 247, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 447, clientY: 401 })
+    fireEvent.keyDown(canvas(), { key: 'Alt', altKey: true })
+    fireEvent.pointerMove(canvas(), { clientX: 537, clientY: 451, altKey: true })
+    expect(screen.getByRole('status').textContent).toContain('90')
+    fireEvent.keyUp(canvas(), { key: 'Alt' })
+    fireEvent.pointerUp(canvas(), { clientX: 537, clientY: 451 })
+    const cells = await saveSnapshot()
+    expect(cells).toEqual(rasterizePrimitive('star', false, { x: 20, y: 10 }, { x: 40, y: 20 }, Math.PI / 2, { fg: 7, bg: 0 }))
+    expect(cells.size).toBeGreaterThan(0)
+    expect(cells.has('30,15')).toBe(false)
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 77, clientY: 41, altKey: true })
+    fireEvent.pointerMove(canvas(), { clientX: 107, clientY: 81 })
+    fireEvent.pointerUp(canvas())
+    expect(await saveSnapshot()).toEqual(cells)
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 04 ROW 03')
+  })
+
+  it.each([
+    ['Cursor', /^Cursor$/], ['Draw', /Draw$/], ['Erase', /^Erase$/], ['Select', /Select$/],
+    ['Fill', /^Fill$/], ['Eyedropper', /^Eyedropper$/], ['Recolor', /^Recolor$/],
+  ])('repositions with %s without editing or disturbing history', async (tool, name) => {
+    renderClassicEditor()
+    press('A')
+    press('z', { ctrlKey: true })
+    press('ArrowRight', { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 77, clientY: 41, altKey: tool !== 'Cursor' })
+    fireEvent.pointerMove(canvas(), { clientX: 107, clientY: 81 })
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 04 ROW 03')
+    expect(document.activeElement).toBe(canvas())
+    expect(screen.queryByText(/selected$/)).toBeNull()
+    expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(new Map())
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 65, fg: 7, bg: 0 }]]))
+  })
+
+  it('supports typing and F-keys after Cursor positioning, and resumes normal drawing', async () => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Cursor' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 77, clientY: 41 })
+    fireEvent.pointerUp(canvas())
+    press('B')
+    press('F1')
+    expect(await saveSnapshot()).toEqual(new Map([
+      ['3,2', { code: 66, fg: 7, bg: 0 }],
+      ['4,2', { code: 176, fg: 7, bg: 0 }],
+    ]))
+    fireEvent.click(screen.getByRole('button', { name: /Draw$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 63, clientY: 1 })
+    fireEvent.pointerUp(canvas())
+    expect((await saveSnapshot()).size).toBe(5)
+    press('z', { ctrlKey: true })
+    expect((await saveSnapshot()).size).toBe(2)
+  })
+
+  it.each(['Draw', 'Erase'])('moves to a scaled VGA preview click without using the %s brush', tool => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByRole('button', { name: tool === 'Draw' ? /Draw$/ : /^Erase$/ }))
+    vi.spyOn(preview(), 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 200, 320, 480))
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 138, clientY: 524 })
+    expect(screen.getByText(/Rows 1–25/)).not.toBeNull()
+    fireEvent.pointerUp(preview())
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 10 ROW 41')
+    expect(screen.getByText(/Rows 17–41/)).not.toBeNull()
+    expect(screen.queryByText(/selected$/)).toBeNull()
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(document.activeElement).toBe(preview())
+  })
+
+  it('creates shared VGA preview selections without viewport feedback and supports copy/delete/undo', async () => {
+    const cells = new Map([
+      ['3,5', { code: 219, fg: 14, bg: 1 }],
+      ['7,35', { code: 32, fg: 3, bg: 1 }],
+      ['0,0', { code: 65, fg: 7, bg: 0 }],
+    ])
+    vi.mocked(readAnsi).mockResolvedValueOnce(cells)
+    renderClassicEditor()
+    fileAction('open')
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Opened opened.ans'))
+    vi.spyOn(preview(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 320, 480))
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 14, clientY: 44 })
+    fireEvent.pointerMove(preview(), { clientX: 30, clientY: 284 })
+    expect(screen.getByText('5 × 31 selected')).not.toBeNull()
+    expect(screen.getByText(/Rows 1–25/)).not.toBeNull()
+    fireEvent.pointerUp(preview())
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 08 ROW 36')
+    expect(screen.getByText(/Rows 12–36/)).not.toBeNull()
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    fireEvent.keyDown(preview(), { key: 'c', ctrlKey: true })
+    expect(screen.getByRole('status').textContent).toContain('Copied 5 × 31 cells')
+    fireEvent.keyDown(preview(), { key: 'Delete' })
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', cells.get('0,0')!]]))
+    fireEvent.keyDown(preview(), { key: 'z', ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(cells)
+  })
+
+  it('auto-scrolls VGA selections in both directions using scaled cells and a fixed anchor', () => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(preview(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 320, 480))
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 2, clientY: 84 })
+    fireEvent.pointerMove(preview(), { clientX: 6, clientY: 481 })
+    for (let i = 0; i < 3; i++) act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByText(/Rows 4–28/)).not.toBeNull()
+    expect(screen.getByText('2 × 53 selected')).not.toBeNull()
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 02 ROW 63')
+    fireEvent.pointerMove(preview(), { clientX: 6, clientY: -1 })
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByText('2 × 9 selected')).not.toBeNull()
+    fireEvent.pointerMove(preview(), { clientX: 6, clientY: 84 })
+    act(() => vi.advanceTimersByTime(200))
+    expect(screen.getByText(/Rows 3–27/)).not.toBeNull()
+    fireEvent.pointerUp(preview())
+    act(() => vi.advanceTimersByTime(200))
+    expect(vi.getTimerCount()).toBe(0)
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+  })
+
+  it.each(['pointercancel', 'lostpointercapture', 'window blur', 'escape', 'hide', 'new document'])(
+    'cleans up VGA preview selection scrolling on %s',
+    event => {
+      vi.useFakeTimers()
+      renderClassicEditor()
+      vi.spyOn(preview(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 320, 480))
+      fireEvent.pointerDown(preview(), { button: 0, clientX: 2, clientY: 84 })
+      fireEvent.pointerMove(preview(), { clientX: 6, clientY: 481 })
+      act(() => vi.advanceTimersByTime(50))
+      if (event === 'window blur') fireEvent(window, new Event('blur'))
+      else if (event === 'escape') fireEvent.keyDown(preview(), { key: 'Escape' })
+      else if (event === 'new document') fireEvent.keyDown(preview(), { key: 'n', ctrlKey: true })
+      else if (event === 'hide') {
+        fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Hide VGA Preview' }))
+      } else fireEvent(preview(), new Event(event, { bubbles: true }))
+      const position = screen.getByLabelText('Cursor position').textContent
+      act(() => vi.advanceTimersByTime(200))
+      expect(screen.getByLabelText('Cursor position').textContent).toBe(position)
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
+  it('maps VGA navigation relative to distant rows and clamps at the safe coordinate boundary', () => {
+    renderClassicEditor()
+    vi.spyOn(preview(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 160, 240))
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: '1000000001' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 159, clientY: 239 })
+    fireEvent.pointerUp(preview())
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 80 ROW 1000000060')
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: String(MAX_ROW) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 159, clientY: 239 })
+    fireEvent.pointerUp(preview())
+    expect(screen.getByLabelText('Cursor position').textContent).toBe(`COL 80 ROW ${MAX_ROW + 1}`)
+    expect(preview().getAttribute('height')).toBe('960')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('auto-scrolls a captured selection in both directions while keeping its anchor fixed', () => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 53, clientY: 501 })
+    for (let i = 0; i < 3; i++) act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByText('2 × 18 selected')).not.toBeNull()
+    expect(screen.getByText(/Rows 4–28/)).not.toBeNull()
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 02 ROW 28')
+    fireEvent.pointerMove(canvas(), { clientX: 53, clientY: -1 })
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByText('2 × 9 selected')).not.toBeNull()
+    expect(screen.getByText(/Rows 3–27/)).not.toBeNull()
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 02 ROW 03')
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(canvas().getAttribute('height')).toBe('500')
+  })
+
+  it('stops auto-scrolling on re-entry and resumes when the selection leaves again', () => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 501 })
+    act(() => vi.advanceTimersByTime(50))
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 201 })
+    act(() => vi.advanceTimersByTime(200))
+    expect(screen.getByText(/Rows 2–26/)).not.toBeNull()
+    expect(screen.getByText('1 × 2 selected')).not.toBeNull()
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 501 })
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByText(/Rows 3–27/)).not.toBeNull()
+  })
+
+  it.each(['pointerup', 'pointercancel', 'lostpointercapture', 'blur', 'window blur', 'escape', 'new document'])(
+    'stops selection auto-scrolling on %s',
+    event => {
+      vi.useFakeTimers()
+      renderClassicEditor()
+      vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+      fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+      fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 201 })
+      fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 501 })
+      act(() => vi.advanceTimersByTime(50))
+      if (event === 'escape') press('Escape')
+      else if (event === 'new document') press('n', { ctrlKey: true })
+      else if (event === 'window blur') fireEvent(window, new Event('blur'))
+      else if (event === 'blur') fireEvent.blur(canvas())
+      else fireEvent(canvas(), new Event(event, { bubbles: true }))
+      act(() => vi.advanceTimersByTime(200))
+      expect(screen.getByText(event === 'new document' ? /Rows 1–25/ : /Rows 2–26/)).not.toBeNull()
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
+  it.each(['Draw', 'Erase'])('does not auto-scroll while using %s', tool => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: tool === 'Draw' ? /Draw$/ : /^Erase$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 501 })
+    act(() => vi.advanceTimersByTime(200))
+    expect(screen.getByText(/Rows 1–25/)).not.toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('clamps selection scrolling at the safe row boundaries and document columns', () => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: -20, clientY: -1 })
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    fireEvent.pointerUp(canvas())
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: String(MAX_ROW) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 900, clientY: 501 })
+    for (let i = 0; i < 3; i++) act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByLabelText('Cursor position').textContent).toBe(`COL 80 ROW ${MAX_ROW + 1}`)
+    expect(screen.getByText('80 × 2 selected')).not.toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('cleans up selection scrolling when the canvas unmounts', () => {
+    vi.useFakeTimers()
+    const { unmount } = renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 201 })
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 501 })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    unmount()
+    act(() => vi.runOnlyPendingTimers())
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('accelerates distant selection drags at a bounded scrolling rate', () => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 10000 })
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByText(/Rows 11–35/)).not.toBeNull()
+    expect(screen.getByText('1 × 35 selected')).not.toBeNull()
+  })
+
+  it('does not start selection scrolling from a pointer down in the row gutter', () => {
+    vi.useFakeTimers()
+    renderClassicEditor()
+    vi.spyOn(canvas(), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 842, 500))
+    fireEvent.click(screen.getByRole('button', { name: /Select$/ }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 10, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 43, clientY: 501 })
+    act(() => vi.advanceTimersByTime(200))
+    expect(screen.getByText(/Rows 1–25/)).not.toBeNull()
+    expect(screen.queryByText(/selected$/)).toBeNull()
+  })
+
+  it('opens a clean document from File, resets navigation/history, and saves to its authorized handle', async () => {
+    renderClassicEditor()
+    press('A')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: '1000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Open…/ }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Opened opened.ans'))
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    expect((screen.getByLabelText('Go to row') as HTMLInputElement).value).toBe('1')
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('0,0')).toEqual({ code: 219, fg: 14, bg: 1 })
+    expect(snapshot.get('79,2')).toEqual({ code: 32, fg: 3, bg: 1 })
+    expect(chooseFile).not.toHaveBeenCalled()
+    expect(vi.mocked(writeAnsi).mock.calls[0][1]?.name).toBe('opened.ans')
+  })
+  it('opens with Ctrl+O and keeps a fallback file detached from native save handles', async () => {
+    vi.mocked(chooseAnsiFile).mockResolvedValueOnce({ file: new File(['A'], 'fallback.ans') })
+    renderClassicEditor()
+    press('A')
+    await saveSnapshot()
+    vi.mocked(chooseFile).mockClear()
+    vi.mocked(writeAnsi).mockClear()
+    press('o', { ctrlKey: true })
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Opened fallback.ans'))
+    expect(screen.getByRole('status').textContent).toContain('Save As')
+    press('F4')
+    expect(screen.queryByText('fallback.ans *')).not.toBeNull()
+    press('z', { ctrlKey: true })
+    expect(screen.queryByText('fallback.ans *')).toBeNull()
+    await saveSnapshot()
+    expect(chooseFile).toHaveBeenCalledWith('fallback.ans')
+  })
+  it('does not open a picker when the user declines to discard unsaved work', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderClassicEditor(); press('A'); press('o', { ctrlKey: true })
+    expect(chooseAnsiFile).not.toHaveBeenCalled()
+    expect(screen.queryByText('untitled.ans *')).not.toBeNull()
+  })
+  it('preserves the current document on picker cancellation or malformed-file errors', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(chooseAnsiFile).mockRejectedValueOnce(new DOMException('Canceled', 'AbortError'))
+    renderClassicEditor(); press('A'); press('o', { ctrlKey: true })
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Open canceled'))
+    expect(screen.queryByText('untitled.ans *')).not.toBeNull()
+    vi.mocked(readAnsi).mockRejectedValueOnce(new Error('Unsupported ANSI command'))
+    press('o', { ctrlKey: true })
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Unsupported ANSI command'))
+    expect(screen.getByRole('status').textContent).toContain('Open failed')
+    expect(log).toHaveBeenCalled()
+    expect((await saveSnapshot()).get('0,0')?.code).toBe(65)
+  })
+  it('confirms again if editing continues while an open is pending', async () => {
+    let finish: ((cells: ReadonlyMap<string, { code: number; fg: number; bg: number }>) => void) | undefined
+    vi.mocked(readAnsi).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false)
+    renderClassicEditor(); press('A'); press('o', { ctrlKey: true })
+    await waitFor(() => expect(readAnsi).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+    expect(screen.getByRole('button', { name: /^Save Ctrl/ }).hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+    press('o', { ctrlKey: true })
+    expect(chooseAnsiFile).toHaveBeenCalledOnce()
+    press('B')
+    finish!(new Map())
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Open canceled'))
+    expect(confirm).toHaveBeenCalledTimes(2)
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('0,0')?.code).toBe(65)
+    expect(snapshot.get('1,0')?.code).toBe(66)
+  })
+  it('cancels a pending open without replacing the document', async () => {
+    let finish: ((cells: ReadonlyMap<string, { code: number; fg: number; bg: number }>) => void) | undefined
+    vi.mocked(readAnsi).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    renderClassicEditor(); press('o', { ctrlKey: true })
+    await waitFor(() => expect(readAnsi).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel open' }))
+    finish!(new Map())
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Open canceled'))
+    expect(screen.queryByText('opened.ans')).toBeNull()
+    expect(vi.mocked(readAnsi).mock.calls[0][1].aborted).toBe(true)
+  })
+  it('uses integer-sized glyph rasters in palette tiles, the character drawer, and brush sample', () => {
+    const { container } = renderClassicEditor()
+    const tile = screen.getByTitle('F2: CP437 177')
+    const tileCanvas = tile.querySelector('canvas')
+    expect(tileCanvas?.getAttribute('width')).toBe('16')
+    expect(tileCanvas?.getAttribute('height')).toBe('32')
+    fireEvent.click(tile)
+    const sample = container.querySelector('.sample-cell canvas')
+    expect(sample?.getAttribute('width')).toBe('16')
+    expect(sample?.getAttribute('height')).toBe('32')
+    const drawerCanvas = screen.getByRole('button', { name: 'CP437 177', hidden: true }).querySelector('canvas')
+    expect(drawerCanvas?.getAttribute('width')).toBe('8')
+    expect(drawerCanvas?.getAttribute('height')).toBe('16')
+  })
+  it('moves with arrows, places F-key glyphs, types CP437 text, and saves bytes from the model', async () => {
+    renderClassicEditor()
+    press('ArrowRight'); press('ArrowDown'); press('F4'); press('A')
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 04 ROW 02')
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('1,1')).toEqual({ code: 219, fg: 7, bg: 0 })
+    expect(snapshot.get('2,1')).toEqual({ code: 65, fg: 7, bg: 0 })
+    expect(screen.getByRole('status').textContent).toBe('Saved test.ans.')
+  })
+  it('switches function palettes and ANSI foreground/background', async () => {
+    renderClassicEditor()
+    fireEvent.change(screen.getByLabelText('Function key character set'), { target: { value: '1' } })
+    fireEvent.click(screen.getByLabelText('Foreground Yellow'))
+    fireEvent.click(screen.getByLabelText('Background Blue'))
+    press('F1')
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('0,0')).toEqual({ code: 218, fg: 14, bg: 1 })
+  })
+  it.each([
+    { ctrlKey: true },
+    { metaKey: true },
+  ])('supports undo and both redo shortcuts across editor controls with %o', async modifier => {
+    renderClassicEditor()
+    press('A'); press('B')
+    const draw = screen.getByRole('button', { name: 'Draw' })
+    draw.focus()
+    const shortcut = (target: HTMLElement, key: string, shiftKey = false) => {
+      const event = new KeyboardEvent('keydown', { key, ...modifier, shiftKey, bubbles: true, cancelable: true })
+      fireEvent(target, event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    shortcut(draw, 'z')
+    shortcut(draw, 'Z', true)
+    fireEvent.click(screen.getByText('Edit', { selector: 'summary' }))
+    const menu = screen.getByText('Edit', { selector: 'summary' })
+    menu.focus()
+    shortcut(menu, 'z')
+    shortcut(menu, 'y')
+    shortcut(preview(), 'z')
+    expect((await saveSnapshot()).get('1,0')).toBeUndefined()
+    shortcut(canvas(), 'Z', true)
+    expect([...(await saveSnapshot()).values()].map(cell => cell.code)).toEqual([65, 66])
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 03 ROW 01')
+  })
+  it.each(['input', 'select', 'textarea', 'contenteditable', 'dialog'])('leaves history shortcuts native in %s', async targetKind => {
+    renderClassicEditor()
+    press('A')
+    let target: HTMLElement
+    if (targetKind === 'input') target = screen.getByLabelText('Go to row')
+    else if (targetKind === 'select') target = screen.getByLabelText('Function key character set')
+    else if (targetKind === 'dialog') {
+      fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+      fireEvent.click(screen.getByRole('button', { name: 'IBM font license and notices' }))
+      target = screen.getByRole('button', { name: 'Close' })
+    } else {
+      target = document.createElement(targetKind === 'textarea' ? 'textarea' : 'div')
+      if (targetKind === 'contenteditable') target.setAttribute('contenteditable', 'true')
+      canvas().parentElement!.append(target)
+    }
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+      for (const [key, shiftKey] of [['z', false], ['Z', true], ['y', false]] as const) {
+        const event = new KeyboardEvent('keydown', { key, shiftKey, ...modifier, bubbles: true, cancelable: true })
+        fireEvent(target, event)
+        expect(event.defaultPrevented).toBe(false)
+      }
+    }
+    expect((await saveSnapshot()).get('0,0')?.code).toBe(65)
+  })
+  it('ignores Alt-modified, composing, and already handled history shortcuts', async () => {
+    renderClassicEditor()
+    press('A')
+    const target = screen.getByRole('button', { name: 'Draw' })
+    for (const extra of [{ altKey: true }, { isComposing: true }, {}]) {
+      const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, ...extra, bubbles: true, cancelable: true })
+      if (!Object.keys(extra).length) event.preventDefault()
+      fireEvent(target, event)
+    }
+    expect((await saveSnapshot()).get('0,0')?.code).toBe(65)
+  })
+  it('supports distant rows, undo and redo with no predefined document height', async () => {
+    renderClassicEditor()
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: '1000000001' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    press('F6'); press('z', { ctrlKey: true }); press('z', { ctrlKey: true, shiftKey: true })
+    const snapshot = await saveSnapshot()
+    expect(snapshot.size).toBe(1)
+    expect(snapshot.get('0,1000000000')?.code).toBe(220)
+  })
+  it('copies and pastes selections including blank cells and mirrors glyphs', async () => {
+    renderClassicEditor()
+    press('F7') // left-half block at 0,0
+    press('ArrowLeft')
+    press('ArrowRight', { shiftKey: true })
+    press('c', { ctrlKey: true })
+    press('ArrowDown'); press('v', { ctrlKey: true })
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('1,1')?.code).toBe(221)
+    expect(screen.getByRole('status').textContent).toBe('Saved test.ans.')
+  })
+  it('groups a drag stroke into one undo and interpolates skipped mouse positions', async () => {
+    renderClassicEditor()
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 83, clientY: 1 })
+    fireEvent.pointerUp(canvas())
+    press('z', { ctrlKey: true }); press('y', { ctrlKey: true })
+    const snapshot = await saveSnapshot()
+    expect(snapshot.size).toBe(5)
+    expect(snapshot.get('2,0')?.code).toBe(219)
+  })
+  it.each([0, 1000000000])('recolors only existing cells along a drag at row %s, preserving glyphs and grouping undo', async row => {
+    const source = new Map([
+      [`0,${row}`, { code: 223, fg: 4, bg: 2 }],
+      [`1,${row}`, { code: 177, fg: 3, bg: 0 }],
+      [`3,${row}`, { code: 32, fg: 7, bg: 1 }],
+      [`4,${row}`, { code: 65, fg: 6, bg: 0 }],
+      [`5,${row}`, { code: 219, fg: 5, bg: 0 }],
+    ])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: String(row + 1) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.click(screen.getByLabelText('Foreground Yellow'))
+    fireEvent.click(screen.getByLabelText('Background Blue'))
+    fireEvent.click(screen.getByRole('button', { name: 'Recolor' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 83, clientY: 1 })
+    fireEvent.pointerUp(canvas())
+    const expected = new Map(source)
+    for (const x of [0, 1, 3, 4]) expected.set(`${x},${row}`, { ...source.get(`${x},${row}`)!, fg: 14, bg: 1 })
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+    fireEvent.click(screen.getByRole('button', { name: 'Recolor' }))
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.pointerUp(preview())
+    expect(await saveSnapshot()).toEqual(expected)
+    press('A'); press('F1')
+    const typed = await saveSnapshot()
+    expect(typed.get(`0,${row}`)).toEqual({ code: 65, fg: 14, bg: 1 })
+    expect(typed.get(`1,${row}`)).toEqual({ code: 176, fg: 14, bg: 1 })
+  })
+  it('leaves blanks and unchanged recolors clean without losing redo, and commits canceled recolor strokes', async () => {
+    renderClassicEditor()
+    press('A'); press('z', { ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Recolor' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerMove(canvas(), { clientX: 83, clientY: 1 })
+    fireEvent.pointerUp(canvas())
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTitle('Redo').hasAttribute('disabled')).toBe(false)
+    expect(await saveSnapshot()).toEqual(new Map())
+    press('y', { ctrlKey: true })
+    await saveSnapshot()
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerUp(canvas())
+    expect(screen.queryByText('test.ans *')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Foreground Yellow'))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 43, clientY: 1 })
+    fireEvent.pointerCancel(canvas())
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 65, fg: 14, bg: 0 }]]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 65, fg: 7, bg: 0 }]]))
+  })
+  it('hides and restores VGA preview from Window menu', () => {
+    renderClassicEditor()
+    expect(screen.queryByLabelText('VGA preview')).not.toBeNull()
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide VGA Preview' }))
+    expect(screen.queryByLabelText('VGA preview')).toBeNull()
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show VGA Preview' }))
+    expect(screen.queryByLabelText('VGA preview')).not.toBeNull()
+  })
+  it('surfaces errors and cancellation without reporting a successful save', async () => {
+    vi.mocked(writeAnsi).mockRejectedValueOnce(new Error('Disk full'))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    renderClassicEditor(); press('F1')
+    fileAction('save')
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Disk full'))
+    expect(log).toHaveBeenCalled()
+    vi.mocked(chooseFile).mockRejectedValueOnce(new DOMException('Canceled', 'AbortError'))
+    fileAction('save')
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Save canceled'))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+  it('asks before discarding unsaved changes and rejects invalid row input', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderClassicEditor(); press('F1'); press('n', { ctrlKey: true })
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(screen.getByText('untitled.ans *')).not.toBeNull()
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: '1e100' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    expect(screen.getByRole('alert').textContent).toContain('Enter a whole row number')
+  })
+  it('keeps new edits modified while an earlier native save finishes', async () => {
+    let finish: (() => void) | undefined
+    vi.mocked(writeAnsi).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    renderClassicEditor(); press('F1')
+    fileAction('save')
+    await waitFor(() => expect(writeAnsi).toHaveBeenCalled())
+    press('o', { ctrlKey: true })
+    expect(chooseAnsiFile).not.toHaveBeenCalled()
+    press('A')
+    finish!()
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Saved test.ans.'))
+    expect(screen.getByText('test.ans *')).not.toBeNull()
+    press('z', { ctrlKey: true })
+    expect(screen.queryByText('test.ans *')).toBeNull()
+  })
+  it('does not claim a browser download has been persisted', async () => {
+    vi.mocked(chooseFile).mockResolvedValueOnce(undefined)
+    renderClassicEditor(); press('F1')
+    await saveSnapshot()
+    expect(screen.getByText('untitled.ans *')).not.toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('delivery cannot be verified')
+  })
+  it('places the screenshot F-key assignments and does nothing for unassigned F11/F12', async () => {
+    renderClassicEditor()
+    for (let index = 1; index <= 12; index++) press(`F${index}`)
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 11 ROW 01')
+    const snapshot = await saveSnapshot()
+    expect([...snapshot.values()].map(cell => cell.code)).toEqual([176, 177, 178, 219, 223, 220, 221, 222, 254, 250])
+  })
+  it('cycles 16 foreground and eight background colors with Ctrl+arrows without moving or editing', async () => {
+    renderClassicEditor()
+    const cycle = (key: string) => {
+      const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true })
+      fireEvent(canvas(), event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    fireEvent.click(screen.getByLabelText('Foreground White'))
+    cycle('ArrowRight')
+    expect(screen.getByLabelText('Foreground Black').getAttribute('aria-pressed')).toBe('true')
+    cycle('ArrowLeft')
+    expect(screen.getByLabelText('Foreground White').getAttribute('aria-pressed')).toBe('true')
+    cycle('ArrowUp')
+    expect(screen.getByLabelText('Background Light gray').getAttribute('aria-pressed')).toBe('true')
+    cycle('ArrowDown')
+    expect(screen.getByLabelText('Background Black').getAttribute('aria-pressed')).toBe('true')
+    cycle('ArrowRight')
+    cycle('ArrowDown')
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    expect(screen.queryByLabelText('Background White')).toBeNull()
+    press('F4')
+    expect((await saveSnapshot()).get('0,0')).toEqual({ code: 219, fg: 0, bg: 1 })
+  })
+  it('does not intercept Ctrl+arrows outside the canvas', () => {
+    renderClassicEditor()
+    const input = screen.getByLabelText('Go to row')
+    const event = new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, bubbles: true, cancelable: true })
+    fireEvent(input, event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(screen.getByLabelText('Foreground Light gray').getAttribute('aria-pressed')).toBe('true')
+  })
+  it('swaps a bright foreground to its base background color with an explicit notification', async () => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByLabelText('Foreground Yellow'))
+    fireEvent.click(screen.getByLabelText('Background Blue'))
+    fireEvent.click(screen.getByLabelText('Swap foreground and background'))
+    expect(screen.getByLabelText('Foreground Blue').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByLabelText('Background Brown').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('status').textContent).toContain('bright foreground')
+    press('F4')
+    expect((await saveSnapshot()).get('0,0')).toEqual({ code: 219, fg: 1, bg: 6 })
+  })
+  it('opens only one application menu and toggles the active menu closed', () => {
+    renderClassicEditor()
+    for (const name of ['File', 'Edit', 'Window', 'Settings']) {
+      const summary = screen.getByText(name, { selector: 'summary' })
+      fireEvent.click(summary)
+      expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(1)
+      expect(summary.closest('details')?.open).toBe(true)
+    }
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
+  })
+  it('switches open menus on hover, but does not open menus from an idle hover', () => {
+    renderClassicEditor()
+    const headings = ['File', 'Edit', 'Window', 'Settings'].map(name => screen.getByText(name, { selector: 'summary' }))
+    for (const heading of headings) fireEvent.mouseEnter(heading)
+    expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
+    fireEvent.click(headings[0])
+    for (const heading of [...headings.slice(1), headings[0]]) {
+      fireEvent.mouseEnter(heading)
+      expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(1)
+      expect(heading.closest('details')?.open).toBe(true)
+    }
+    fireEvent.mouseLeave(headings[0])
+    expect(headings[0].closest('details')?.open).toBe(true)
+    fireEvent.click(headings[0])
+    fireEvent.mouseEnter(headings[1])
+    expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
+  })
+  it('shows the complete bundled IBM font notices and license in a modal without editing art', () => {
+    expect(fontNotice).toContain('Web437 IBM VGA 8x16')
+    expect(fontLicense).toContain('Attribution-ShareAlike 4.0 International')
+    renderClassicEditor()
+    const settings = screen.getByText('Settings', { selector: 'summary' })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      fireEvent.click(settings)
+      fireEvent.click(screen.getByRole('button', { name: 'IBM font license and notices' }))
+      const dialog = screen.getByRole('dialog', { name: 'IBM font license and notices' })
+      expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalledTimes(attempt + 1)
+      expect(settings.closest('details')?.open).toBe(false)
+      expect(within(dialog).getByLabelText('Font notices').textContent).toBe(fontNotice)
+      expect(within(dialog).getByLabelText('Full CC BY-SA 4.0 license').textContent).toBe(fontLicense)
+      const content = within(dialog).getByLabelText('Font notices').parentElement!
+      expect(content.scrollTop).toBe(0)
+      content.scrollTop = 100
+      expect(screen.queryByRole('link', { name: 'CC BY-SA 4.0' })).toBeNull()
+      if (attempt === 0) fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      else fireEvent.keyDown(within(dialog).getByLabelText('Full CC BY-SA 4.0 license'), { key: 'Escape' })
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(document.activeElement).toBe(settings)
+      expect(screen.queryByText('untitled.ans *')).toBeNull()
+    }
+  })
+  it('dismisses menus on outside pointer/focus and Escape, restoring trigger focus on Escape', () => {
+    renderClassicEditor()
+    const file = screen.getByText('File', { selector: 'summary' })
+    fireEvent.click(file)
+    fireEvent.pointerDown(canvas())
+    expect(file.closest('details')?.open).toBe(false)
+    fireEvent.click(file)
+    fireEvent.focusIn(screen.getByLabelText('Go to row'))
+    expect(file.closest('details')?.open).toBe(false)
+    fireEvent.click(file)
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Save As/ }), { key: 'Escape' })
+    expect(file.closest('details')?.open).toBe(false)
+    expect(document.activeElement).toBe(file)
+  })
+  it('closes the menu after choosing an action but leaves it open for disabled commands', () => {
+    renderClassicEditor()
+    const edit = screen.getByText('Edit', { selector: 'summary' })
+    fireEvent.click(edit)
+    fireEvent.click(screen.getByRole('button', { name: /^Undo/ }))
+    expect(edit.closest('details')?.open).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Block select toggle' }))
+    expect(edit.closest('details')?.open).toBe(false)
+    expect(screen.getByRole('button', { name: /Select$/, pressed: true })).not.toBeNull()
+  })
+})

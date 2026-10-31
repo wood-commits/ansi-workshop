@@ -1,0 +1,20 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "ansi-workshop-agent-token",
+      "description": "Paste an AGENT token issued by ANSI Workshop (never the owner key)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "ansi-workshop": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}\\build-mcp\\mcp\\stdio.js"],
+      "env": {
+        "ANSI_WORKSHOP_AGENT_TOKEN": "${input:ansi-workshop-agent-token}"
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+Web437 IBM VGA 8x16
+From The Ultimate Oldschool PC Font Pack v2.2 by VileR.
+Source: https://int10h.org/oldschool-pc-fonts/
+License: Creative Commons Attribution-ShareAlike 4.0 International
+https://creativecommons.org/licenses/by-sa/4.0/
+The original license text is included in LICENSE.txt.
+
+Web437_IBM_VGA_8x16.woff is an unmodified copy from the official v2.2 web archive.
+ANSI Workshop derives an 8x16, CP437-byte-indexed bitmap from its glyph outlines.
+The derived bitmap in src/assets/ibm-vga-8x16.json is also CC BY-SA 4.0.
+Its only changes are the storage format and indexing of printable bytes 32-255;
+no glyph designs are changed. Regenerate it using npm run font:generate.
+The font license applies to these font assets, not to the editor's own code.
+No endorsement by VileR or IBM is implied.
