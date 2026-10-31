@@ -10,6 +10,11 @@ Node.js runs Vite and development tools, plus an optional authenticated local
 agent broker. The editor works without the broker, and agent access is off by
 default. See [MCP design and setup](./MCP.md) for its explicit trust boundaries.
 
+The shared agent protocol configures Zod's non-JIT validator before constructing
+schemas when running in a browser. This skips the eval capability probe under
+the existing CSP. Node broker/MCP processes retain their prior Zod configuration;
+the validation schemas and limits are identical in both environments.
+
 The only persistent write capability is a handle returned by a user-initiated
 browser file picker, subject to browser write permission. The download fallback uses an in-memory Blob and a
 temporary object URL. New documents forget the previous handle but preserve

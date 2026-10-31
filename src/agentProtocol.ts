@@ -1,5 +1,8 @@
 import { z } from 'zod'
 
+// Avoid Zod's eval probe under browser CSP without changing Node configuration.
+if (typeof window !== 'undefined') z.config({ jitless: true })
+
 export const BROKER_URL = 'http://127.0.0.1:47831'
 export const MAX_AGENT_CELLS = 1024
 export const MAX_READ_CELLS = 2048

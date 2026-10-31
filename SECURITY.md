@@ -39,7 +39,10 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
   padding, but any non-EOF content after EOF still fails.
 - A restrictive CSP blocks third-party scripts, connections, frames/embedding,
   objects, forms, and base-URL replacement. Style attributes are allowed for
-  fixed color swatches. Development additionally permits inline scripts for
+  fixed color swatches. Browser agent schemas configure Zod with `jitless: true`
+  before construction, avoiding its dynamic-code-generation capability probe
+  without permitting `unsafe-eval`. Node broker/MCP configuration is unchanged.
+  Development additionally permits inline scripts for
   Vite React refresh and its loopback HMR WebSocket. Preview removes both
   development allowances. The production build also embeds the supported
   production CSP directives in a meta tag before scripts/styles, so static
