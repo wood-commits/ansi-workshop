@@ -59,6 +59,8 @@ The [Pages workflow](./.github/workflows/pages.yml) checks pull requests and
 pushes to `main` using Node.js 24 and `npm ci`. Lint, all regression tests,
 the production build, SAST, and the dependency audit must pass before publishing.
 Only `dist` is uploaded; the Node broker and MCP build are not deployed.
+CI allows 15 seconds per test for CPU-heavy canvas UI workflows on shared
+runners; local tests retain Vitest's five-second default.
 Actions are pinned to commit SHAs and deployment uses GitHub's short-lived
 workflow token, not a stored personal access token.
 
