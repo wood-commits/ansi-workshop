@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { Editor, key, MAX_ROW, pointFromKey, type Cell } from './model'
+import { Editor, EMPTY, key, MAX_ROW, pointFromKey, type Cell } from './model'
+import { rgbColor } from './colors'
 import { gradientRegion, rasterizeGradient } from './gradient'
 import { ansiChunks } from './export'
 
@@ -8,6 +9,20 @@ const ink = { fg: 14, bg: 1 }
 function rectangle(width: number, height: number, row = 0) {
   const cells = new Map<string, Cell>()
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) cells.set(key(x, row + y), { ...source })
+  return cells
+}
+
+function outline(row = 0, width = 80) {
+  const cells = new Map<string, Cell>()
+  for (let x = 1; x <= 7; x++) {
+    cells.set(key(x, row), { ...source })
+    cells.set(key(x, row + 4), { ...source })
+  }
+  for (let y = row + 1; y < row + 4; y++) {
+    cells.set(key(1, y), { ...source })
+    cells.set(key(7, y), { ...source })
+  }
+  cells.set(key(width - 1, row), { code: 65, fg: 4, bg: 1 })
   return cells
 }
 
@@ -20,8 +35,75 @@ describe('gradients', () => {
       ['1,2', { ...source, code: 65 }],
     ])
     expect([...gradientRegion(cells, { x: 0, y: 0 }).keys()].sort()).toEqual(['0,0', '1,0', '1,1'])
-    expect(() => gradientRegion(cells, { x: 79, y: 0 })).toThrow(/painted cell/)
+    expect(() => gradientRegion(cells, { x: 79, y: 0 })).toThrow(/not enclosed/)
     expect(cells.size).toBe(8)
+  })
+
+  it.each(['linear', 'radial'] as const)('shades an enclosed blank area with a %s gradient without touching barriers', kind => {
+    const cells = outline()
+    cells.set('4,2', { code: 32, fg: 7, bg: 2 })
+    const before = new Map(cells)
+    const region = gradientRegion(cells, { x: 2, y: 2 })
+    expect(region.size).toBe(14)
+    expect([...region.values()]).toEqual(Array.from({ length: 14 }, () => EMPTY))
+    const result = rasterizeGradient(region, kind, { x: 2, y: 2 }, { x: 6, y: 2 }, ink, 'ansi', 80, true)
+    expect(result.get('2,2')).toEqual({ code: 219, ...ink })
+    expect(result.get('6,2')).toEqual({ code: 219, fg: 1, bg: 1 })
+    expect(result.has('4,2')).toBe(false)
+    expect(result.has('1,2')).toBe(false)
+    expect(cells).toEqual(before)
+  })
+
+  it('preserves all four half-block outline inks when shading their blank halves', () => {
+    const cells = outline()
+    cells.set('3,0', { code: 223, fg: 7, bg: 0 })
+    cells.set('3,4', { code: 220, fg: 7, bg: 0 })
+    cells.set('1,2', { code: 221, fg: 7, bg: 0 })
+    cells.set('7,2', { code: 222, fg: 7, bg: 0 })
+    const region = gradientRegion(cells, { x: 2, y: 2 })
+    const result = rasterizeGradient(region, 'linear', { x: 2, y: 2 }, { x: 6, y: 2 }, ink, 'ansi', 80, true)
+    expect(result.size).toBe(19)
+    expect(result.get('3,0')).toEqual({ code: 220, fg: 14, bg: 7 })
+    expect(result.get('3,4')).toEqual({ code: 223, fg: 14, bg: 7 })
+    expect(result.get('1,2')).toEqual({ code: 222, fg: 14, bg: 7 })
+    expect(result.get('7,2')).toEqual({ code: 222, fg: 7, bg: 1 })
+    cells.set('3,0', { code: 223, fg: 14, bg: 0 })
+    const bright = gradientRegion(cells, { x: 2, y: 2 })
+    expect(() => rasterizeGradient(bright, 'linear', { x: 2, y: 2 }, { x: 6, y: 2 },
+      { fg: 12, bg: 1 }, 'ansi', 80, true)).toThrow(/two bright colors/)
+    expect(rasterizeGradient(bright, 'linear', { x: 2, y: 2 }, { x: 6, y: 2 },
+      { fg: 12, bg: 1 }, 'ice', 80, true).get('3,0')).toEqual({ code: 223, fg: 14, bg: 12 })
+    const rgb = rgbColor('#123456')
+    expect(rasterizeGradient(bright, 'linear', { x: 2, y: 2 }, { x: 6, y: 2 },
+      { fg: rgb, bg: 1 }, 'tundra', 80, true).get('3,0')).toEqual({ code: 223, fg: 14, bg: rgb })
+  })
+
+  it('rejects open blank areas, half-block leaks and distant empty gaps without editing', () => {
+    const cells = outline()
+    cells.set('4,0', { code: 221, fg: 7, bg: 0 })
+    expect(() => gradientRegion(cells, { x: 2, y: 2 })).toThrow(/not enclosed/)
+    expect(() => gradientRegion(new Map(), { x: 40, y: 1_000_000_000 })).toThrow(/not enclosed/)
+    expect(cells.has('2,2')).toBe(false)
+    const gap = new Map([['39,1000000000', source], ['41,1000000000', source], ['40,1000000001', source], ['40,0', source]])
+    expect(() => gradientRegion(gap, { x: 40, y: 1_000_000_000 })).toThrow(/not enclosed/)
+  })
+
+  it('keeps enclosed gradients sparse at distant safe rows and respects document width', () => {
+    for (const row of [1_000_000_000, MAX_ROW - 4]) {
+      const editor = new Editor(outline(row, 8), undefined, 'ansi', 8)
+      const before = new Map(editor.cells)
+      const region = gradientRegion(editor.cells, { x: 2, y: row + 2 }, true, 8)
+      expect(region.size).toBe(15)
+      const result = rasterizeGradient(region, 'linear', { x: 2, y: row + 2 }, { x: 6, y: row + 2 }, ink, 'ansi', 8, true)
+      for (const [id, cell] of result) editor.paint(pointFromKey(id), cell)
+      editor.commit()
+      editor.undo()
+      expect(editor.cells).toEqual(before)
+      expect(editor.dirty).toBe(false)
+      editor.redo()
+      expect(editor.cells.size).toBe(before.size + 15)
+      expect(editor.cells.get(key(7, row))).toEqual(before.get(key(7, row)))
+    }
   })
 
   it('includes full, half, and shading blocks with matching colors, even when starting on a half block', () => {

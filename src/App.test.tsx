@@ -9,7 +9,7 @@ import { readAnsi, readAnsiDocument } from './import'
 import { emptySauce } from './sauce'
 import { Editor, MAX_ROW, pointFromKey, type Cell } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
-import { rasterizeGradient, type GradientKind } from './gradient'
+import { gradientRegion, rasterizeGradient, type GradientKind } from './gradient'
 import { bucketFill, type FillMode } from './fill'
 import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
@@ -1278,14 +1278,44 @@ describe('editor UI', () => {
     expect((await saveSnapshot()).get('1,0')?.code).toBe(65)
   })
 
-  it('reports an empty gradient target and leaves click-only gestures unchanged', async () => {
+  it.each<GradientKind>(['linear', 'radial'])('previews and commits a %s gradient inside a blank enclosure in one undo step', async kind => {
+    const source = rasterizePrimitive('rectangle', false, { x: 0, y: 0 }, { x: 12, y: 6 }, 0, { fg: 7, bg: 0 })
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Yellow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Background Blue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Gradient' }))
+    fireEvent.change(screen.getByLabelText('Gradient type'), { target: { value: kind } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 41 })
+    fireEvent.pointerMove(canvas(), { clientX: 107, clientY: 41 })
+    expect(screen.getByRole('status').textContent).toContain('enclosed blank')
+    expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    press('Escape')
+    expect(await saveSnapshot()).toEqual(source)
+    fireEvent.click(screen.getByRole('button', { name: 'Gradient' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 41 })
+    fireEvent.pointerUp(canvas(), { clientX: 127, clientY: 41 })
+    const region = gradientRegion(source, { x: 2, y: 2 })
+    const edits = rasterizeGradient(region, kind, { x: 2, y: 2 }, { x: 8, y: 2 }, { fg: 14, bg: 1 }, 'ansi', 80, true)
+    const result = await saveSnapshot()
+    expect(result).toEqual(new Map([...source, ...edits]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(result)
+  })
+
+  it('reports an unenclosed gradient target and leaves click-only gestures unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     renderClassicEditor()
     fireEvent.click(screen.getByRole('button', { name: 'Gradient' }))
     fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 1 })
     fireEvent.pointerUp(canvas(), { clientX: 107, clientY: 81 })
-    expect(screen.getByRole('alert').textContent).toContain('existing painted cell')
-    expect(consoleError).toHaveBeenCalledWith('ANSI Workshop:', expect.objectContaining({ message: 'Start on an existing painted cell.' }))
+    expect(screen.getByRole('alert').textContent).toContain('not enclosed')
+    expect(consoleError).toHaveBeenCalledWith('ANSI Workshop:', expect.objectContaining({ message: expect.stringContaining('not enclosed') }))
     expect(screen.getByTitle('Undo').hasAttribute('disabled')).toBe(true)
     press('F4')
     fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 1 })

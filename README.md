@@ -222,7 +222,8 @@ without another click. Hovering with all menus closed does not open one.
   only positions the cursor, and the VGA preview retains click-to-position/
   drag-to-select behavior.
 - **Gradients:** choose Gradient, then Linear or Radial. Start on an existing
-  painted cell and drag a line from foreground toward background. Only
+  painted cell or a default blank cell inside a closed outline, and drag a line
+  from foreground toward background. When starting on painted art, only
   side-connected cells matching the starting cell's foreground and background
   are shaded, treating full blocks, half blocks, and F1-F3 shades as one shape
   family. Other glyphs require an exact glyph match; other art is untouched.
@@ -234,6 +235,12 @@ without another click. Hovering with all menus closed does not open one.
   Half-block edges retain their glyph and original background, with their solid
   foreground set to the nearer gradient endpoint color (FG before the midpoint,
   BG from the midpoint outward). This preserves the shape's silhouette.
+  Starting on blank space shades the enclosed interior instead, using the same
+  boundaries as Fill enclosed blank area. Connected black half-block backgrounds
+  receive the nearer endpoint color while preserving the outline ink; glyph/inks
+  may reverse to keep backgrounds valid. Open areas are rejected without changes.
+  Two different bright inks in a classic half-block cell fail without changes;
+  choose a nonbright foreground endpoint or an iCE document.
   Both canvases show a live preview and a line guide. Release places one undo
   step; Escape, pointer cancellation, or focus loss discards it. A click without
   a line changes nothing. Alt+click still positions the cursor.

@@ -297,10 +297,11 @@ Only the main canvas overlays editable cubic outlines and nodes/handles.
 The Gradient tool snapshots the four-connected stored cells matching the
 starting cell's colors and glyph family: full/half blocks and bytes 176-178
 form one shape family, while other glyphs require an exact byte match.
-Missing/default cells cannot start a
-gradient, so flood traversal never enters an unbounded blank document. Work
-and memory scale with the connected region, not its bounding rectangle or row
-index. Linear projection and radial distance use local coordinates in 1:2 VGA
+Starting on a missing/default cell instead snapshots the enclosed blank region
+through Fill's shared enclosure traversal; open areas fail before any preview
+or model writes. Shape discovery scales with the connected stored region;
+blank discovery scales with stored art plus the connected available area, never
+its bounding rectangle or row index. Linear projection and radial distance use local coordinates in 1:2 VGA
 proportions. Coverage clamps at the endpoints and a 4x4 Bayer threshold
 staggers adjacent 0/25/50/75/100% levels. Intermediate levels use bytes
 176-178 with the captured FG/BG; both endpoints use byte 219 with the endpoint
@@ -308,14 +309,20 @@ color in foreground. The BG endpoint never requires swapping a bright color
 into background. Half blocks keep their original byte and background to
 preserve the outside of the shape. Their solid foreground uses the nearer
 gradient endpoint (FG for t < 0.5, BG otherwise), since CP437 cannot represent
-a shaded half block. A separate preview map and high-contrast line guide
+a shaded half block. Enclosed targets' default cells receive the same shading. For enclosed
+half-block backgrounds, the shared `filledBlank` encoder applies the nearer
+endpoint to the blank half and preserves the outline ink, merging equal colors
+or reversing glyph/inks when necessary. Unrepresentable classic bright-ink
+combinations fail without model writes. A separate preview map and line guide
 appear on both canvases without model writes. Release includes the final
 pointer position and commits one transaction; zero-length and canceled
 gestures leave history unchanged. Cancellation, keyboard/wheel suppression,
 agent exclusion, and document replacement follow the primitive lifecycle.
 
-Fill and Gradient share `paintedRegion` from `fill.ts` (also re-exported as
-`gradientRegion`). Shape recoloring sets FG without changing BG or the glyph,
+Fill and Gradient share `paintedRegion`, `enclosedBlankRegion`, and `filledBlank`
+from `fill.ts`. `gradientRegion` selects discovery from the starting cell, while
+the drag captures whether the target is enclosed for rasterization.
+Shape recoloring sets FG without changing BG or the glyph,
 except that shading bytes 176-178 become full blocks. The selected brush and
 BG are not used. Enclosed mode starts on a missing/default cell and traverses
 default cells plus black background halves of the four half-block glyphs.

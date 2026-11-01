@@ -6,7 +6,7 @@ import { readTundraDocument } from './tundra'
 import { ArtCanvas, CANVAS_SIZES, ShadeGlyph, VgaPreview, type PointerInput } from './Canvas'
 import type { Tool } from './tools'
 import type { CanvasFont } from './vgaFont'
-import { Editor, EMPTY, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
+import { Editor, EMPTY, key, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
 import { convertPathNode, rasterizePath, removePathNode, type BezierPath, type PathNode } from './path'
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
@@ -94,7 +94,7 @@ export function App() {
   const [gradientPreview, setGradientPreview] = useState<ReadonlyMap<string, Cell>>()
   const [gradientLine, setGradientLine] = useState<GradientLine>()
   const gradientDrag = useRef<{
-    start: Point; end: Point; kind: GradientKind; fg: number; bg: number
+    start: Point; end: Point; kind: GradientKind; fg: number; bg: number; enclosed: boolean
     region: ReadonlyMap<string, Cell>; cells: ReadonlyMap<string, Cell>
   } | undefined>(undefined)
   const [anchor, setAnchor] = useState<Point>()
@@ -563,17 +563,18 @@ export function App() {
           setError('')
           gradientDrag.current = {
             start: next, end: next, kind: gradientKind, fg, bg,
+            enclosed: !editor.cells.has(key(next.x, next.y)),
             region: gradientRegion(editor.cells, next, true, editor.width), cells: new Map(),
           }
         }
         const drag = gradientDrag.current
         if (!drag) return
         drag.end = next
-        drag.cells = rasterizeGradient(drag.region, drag.kind, drag.start, drag.end, drag, editor.format, editor.width)
+        drag.cells = rasterizeGradient(drag.region, drag.kind, drag.start, drag.end, drag, editor.format, editor.width, drag.enclosed)
         setCursor(next)
         setGradientPreview(drag.cells)
         setGradientLine({ start: drag.start, end: drag.end })
-        setMessage(`${drag.kind === 'linear' ? 'Linear' : 'Radial'} gradient: foreground at start, background at end. Release to shade ${drag.region.size} matching connected cells; Escape cancels.`)
+        setMessage(`${drag.kind === 'linear' ? 'Linear' : 'Radial'} gradient: foreground at start, background at end. Release to shade ${drag.region.size} ${drag.enclosed ? 'enclosed blank-area' : 'matching connected'} cells; Escape cancels.`)
       } catch (cause) {
         gradientDrag.current = undefined; setGradientPreview(undefined); setGradientLine(undefined)
         report(cause)
@@ -887,7 +888,7 @@ export function App() {
           }}>
             <option value="linear">Linear</option><option value="radial">Radial</option>
           </select></label>
-          <span className="muted">Drag FG to BG over matching connected cells · Esc cancels</span>
+          <span className="muted">Drag FG to BG over a shape or enclosed blank area · Esc cancels</span>
         </div>}
         {tool === 'fill' && <div className="primitive-controls">
           <label>Mode <select aria-label="Fill behavior" value={fillMode} onChange={event => {

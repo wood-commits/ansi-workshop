@@ -1,8 +1,15 @@
 import { BLOCK_GLYPHS } from './ansi'
 import { validColor, type DocumentFormat } from './colors'
-import { MAX_ROW, WIDTH, pointFromKey, validPoint, type Cell, type Point } from './model'
+import { enclosedBlankRegion, filledBlank, paintedRegion } from './fill'
+import { EMPTY, key, MAX_ROW, WIDTH, pointFromKey, validPoint, type Cell, type Point } from './model'
 
-export { paintedRegion as gradientRegion } from './fill'
+export function gradientRegion(cells: ReadonlyMap<string, Cell>, start: Point, matching = true, width = WIDTH): ReadonlyMap<string, Cell> {
+  validatePoint(start, width)
+  if (cells.has(key(start.x, start.y))) return paintedRegion(cells, start, matching, width)
+  const region = new Map<string, Cell>()
+  for (const id of enclosedBlankRegion(cells, start, width)) region.set(id, { ...(cells.get(id) ?? EMPTY) })
+  return region
+}
 
 export type GradientKind = 'linear' | 'radial'
 export interface GradientLine { start: Point; end: Point }
@@ -19,7 +26,7 @@ const BAYER = [
 ]
 
 export function rasterizeGradient(
-  region: ReadonlyMap<string, Cell>, kind: GradientKind, start: Point, end: Point, ink: Pick<Cell, 'fg' | 'bg'>, format: DocumentFormat = 'ansi', width = WIDTH,
+  region: ReadonlyMap<string, Cell>, kind: GradientKind, start: Point, end: Point, ink: Pick<Cell, 'fg' | 'bg'>, format: DocumentFormat = 'ansi', width = WIDTH, enclosed = false,
 ): ReadonlyMap<string, Cell> {
   validatePoint(start, width); validatePoint(end, width)
   if (!validColor(ink.fg, false, format) || !validColor(ink.bg, true, format)) {
@@ -36,7 +43,8 @@ export function rasterizeGradient(
     const t = kind === 'radial' ? Math.hypot(x, y) / length : (x * (dx / length) + y * (dy / length)) / length
     if (BLOCK_GLYPHS.has(cell.code) && cell.code !== 219) {
       // CP437 has no shaded half blocks; retain the edge and its outside color.
-      cells.set(id, { ...cell, fg: t < 0.5 ? ink.fg : ink.bg })
+      const fg = t < 0.5 ? ink.fg : ink.bg
+      cells.set(id, enclosed ? filledBlank(cell, fg, format) : { ...cell, fg })
       continue
     }
     const coverage = (1 - Math.max(0, Math.min(1, t))) * 4

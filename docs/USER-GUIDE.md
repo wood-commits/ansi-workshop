@@ -169,7 +169,7 @@ light or dark art. The typing cursor and VGA preview navigation are unchanged.
 | Move | Drag a painted cell to move its side-connected shape, regardless of glyph or color. |
 | Primitive | Drag a rectangle, ellipse, rounded rectangle, or star, filled or outlined. |
 | Path | Build an editable Bezier outline, then Finish to fill it or subtract it from existing art. |
-| Gradient | Drag a linear or radial gradient across a matching connected region. |
+| Gradient | Drag a linear or radial gradient across a matching shape or enclosed blank area. |
 | Fill | Click to recolor a matching shape or fill an enclosed blank area. |
 | Eyedropper | Click once to sample foreground and background colors. Dragging does not sample more cells. |
 
@@ -313,8 +313,8 @@ and unfinished drafts are not included in saves/exports.
 
 ### Gradient tool
 
-Use **Gradient** to shade an existing connected shape between two colors.
-It does not create a shape on blank space. Start with the filled rectangle
+Use **Gradient** to shade an existing connected shape or an enclosed blank area
+between two colors. Unenclosed blank space is rejected. Start with the filled rectangle
 and circle from the Primitive walkthrough.
 
 #### Linear: shade from one side to the other
@@ -364,6 +364,21 @@ contact stop the region.
 For predictable results, start with a uniformly colored filled primitive.
 Applying another gradient to an already shaded shape may affect only part of
 it because its cells now have different colors.
+
+#### Shade an enclosed blank area
+
+Choose Linear or Radial and drag from a default blank cell inside a closed
+outline. The whole connected interior receives the gradient; the outline and
+unrelated art stay unchanged. The drag direction/radius, live preview, cancellation,
+and single-step undo work just as they do for filled shapes.
+
+This uses the same enclosure rules as **Fill enclosed blank area**, including
+connected black background halves of half-block edges. Those blank halves use
+the nearer endpoint color, preserving the outline ink (sometimes reversing the
+glyph/inks). Colored spaces and nonblack backgrounds remain barriers. An area
+that reaches the top/side edges or a completely empty row fails without changes.
+Classic ANSI cannot retain two different bright inks in one half-block cell;
+choose a nonbright foreground endpoint or use an iCE document if this occurs.
 
 ### Fill tool
 

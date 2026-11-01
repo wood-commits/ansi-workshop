@@ -48,7 +48,8 @@ function blankArea(cell: Cell | undefined): Rect | undefined {
   return { left, top, right: left + width, bottom: top + height }
 }
 
-function enclosedBlankRegion(cells: ReadonlyMap<string, Cell>, start: Point, width: number): ReadonlySet<string> {
+export function enclosedBlankRegion(cells: ReadonlyMap<string, Cell>, start: Point, width: number): ReadonlySet<string> {
+  validatePoint(start, width)
   if (cells.has(key(start.x, start.y))) throw new Error('Click a default blank cell inside a closed outline, or choose Recolor shape.')
   const rows = new Set<number>()
   for (const id of cells.keys()) rows.add(pointFromKey(id).y)
@@ -82,7 +83,7 @@ function enclosedBlankRegion(cells: ReadonlyMap<string, Cell>, start: Point, wid
   return seen
 }
 
-function filledBlank(cell: Cell | undefined, fg: number, format: DocumentFormat): Cell {
+export function filledBlank(cell: Cell | undefined, fg: number, format: DocumentFormat): Cell {
   if (!cell || cell.fg === fg) return { code: 219, fg, bg: EMPTY.bg }
   if (validColor(fg, true, format)) return { ...cell, bg: fg }
   if (validColor(cell.fg, true, format)) {
