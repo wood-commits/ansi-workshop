@@ -460,10 +460,16 @@ See [file compatibility](../README.md#open-saved-ansi-files) for the exact limit
 
 ### Choose the right save mode
 
+Choose **File > Save As ASCII…** for a separate `.asc` copy without ANSI
+escape codes or colors. It preserves blocks, shading, and box drawing as raw
+CP437 bytes, not UTF-8 or strict 7-bit ASCII. Use a CP437-aware text viewer.
+The copy leaves the document name, normal ANSI Save destination, and modified
+indicator unchanged; use normal Save as well to keep your colored artwork.
+
 | Browser / mode | What Save does |
 | --- | --- |
 | Standalone Chrome/Edge with native picker support | First Save asks for a destination; later Save writes to the same authorized file. Save As chooses a new destination. |
-| Download mode, including the VS Code integrated browser | Requests an `.ans` download. Your browser controls its destination and whether to ask where to save. |
+| Download mode, including the VS Code integrated browser | Requests an `.ans` download (or `.asc` for Save As ASCII). Your browser controls its destination and whether to ask where to save. |
 
 If opened with a native picker, **Save** targets that file, subject to write
 permission. File-input opening is read-only: Save asks for a destination where

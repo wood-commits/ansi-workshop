@@ -10,6 +10,14 @@ function sgr(cell: Cell): number[] {
 
 // Yield bounded byte chunks, including for very distant sparse rows.
 export function* ansiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Array<ArrayBuffer>> {
+  yield* artChunks(cells, true)
+}
+
+export function* asciiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Array<ArrayBuffer>> {
+  yield* artChunks(cells, false)
+}
+
+function* artChunks(cells: ReadonlyMap<string, Cell>, colors: boolean): Generator<Uint8Array<ArrayBuffer>> {
   const rows = new Map<number, Map<number, Cell>>()
   for (const [id, cell] of cells) {
     const { x, y } = pointFromKey(id)
@@ -17,7 +25,7 @@ export function* ansiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Ar
     if (!row) { row = new Map(); rows.set(y, row) }
     row.set(x, cell)
   }
-  yield new Uint8Array([escape, 91, 48, 109, escape, 91, 50, 74, escape, 91, 72])
+  if (colors) yield new Uint8Array([escape, 91, 48, 109, escape, 91, 50, 74, escape, 91, 72])
   let nextRow = 0
   let previous: Cell = EMPTY
   for (const [y, row] of [...rows].sort(([a], [b]) => a - b)) {
@@ -33,15 +41,16 @@ export function* ansiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Ar
     const lastColumn = Math.max(...row.keys())
     for (let x = 0; x <= lastColumn; x++) {
       const cell = row.get(x) ?? EMPTY
-      if (cell.fg !== previous.fg || cell.bg !== previous.bg) bytes.push(...sgr(cell))
+      if (colors && (cell.fg !== previous.fg || cell.bg !== previous.bg)) bytes.push(...sgr(cell))
       bytes.push(cell.code)
       previous = cell
     }
     // Reset before line feeds so colored backgrounds do not leak into blank rows.
-    bytes.push(escape, 91, 48, 109, 13, 10)
+    if (colors) bytes.push(escape, 91, 48, 109)
+    bytes.push(13, 10)
     previous = EMPTY
     yield new Uint8Array(bytes)
     nextRow = y + 1
   }
-  yield new Uint8Array([escape, 91, 48, 109])
+  if (colors) yield new Uint8Array([escape, 91, 48, 109])
 }

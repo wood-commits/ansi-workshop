@@ -1,4 +1,4 @@
-import { ansiChunks } from './export'
+import { ansiChunks, asciiChunks } from './export'
 import type { Cell } from './model'
 
 export interface AnsiFileHandle {
@@ -21,13 +21,16 @@ export function supportsNativeFileAccess(): boolean {
 export function hasNativeSave(): boolean {
   return supportsNativeFileAccess() && typeof (window as PickerWindow).showSaveFilePicker === 'function'
 }
-export async function chooseFile(name: string): Promise<AnsiFileHandle | undefined> {
+export async function chooseFile(name: string, format: 'ansi' | 'ascii' = 'ansi'): Promise<AnsiFileHandle | undefined> {
   if (!hasNativeSave()) return undefined
   const picker = (window as PickerWindow).showSaveFilePicker
   if (!picker) return undefined
   return picker.call(window, {
     suggestedName: name,
-    types: [{ description: 'ANSI art (CP437)', accept: { 'application/octet-stream': ['.ans'] } }],
+    types: [{
+      description: format === 'ascii' ? 'ASCII art (CP437, no ANSI codes)' : 'ANSI art (CP437)',
+      accept: { 'application/octet-stream': [format === 'ascii' ? '.asc' : '.ans'] },
+    }],
   })
 }
 
@@ -37,11 +40,29 @@ export async function writeAnsi(
   name: string,
   signal: AbortSignal,
 ): Promise<void> {
+  await writeChunks(ansiChunks(cells), handle, name, signal)
+}
+
+export async function writeAscii(
+  cells: ReadonlyMap<string, Cell>,
+  handle: AnsiFileHandle | undefined,
+  name: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await writeChunks(asciiChunks(cells), handle, name, signal)
+}
+
+async function writeChunks(
+  source: Iterable<Uint8Array<ArrayBuffer>>,
+  handle: AnsiFileHandle | undefined,
+  name: string,
+  signal: AbortSignal,
+): Promise<void> {
   const writable = handle ? await handle.createWritable() : undefined
   const chunks: Uint8Array<ArrayBuffer>[] = []
   let downloadSize = 0, count = 0
   try {
-    for (const chunk of ansiChunks(cells)) {
+    for (const chunk of source) {
       signal.throwIfAborted()
       if (writable) await writable.write(chunk)
       else {

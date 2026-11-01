@@ -1,9 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { ansiChunks } from './export'
+import { ansiChunks, asciiChunks } from './export'
 import { Editor, key } from './model'
 
 function bytes(editor: Editor): number[] { return [...ansiChunks(editor.cells)].flatMap(chunk => [...chunk]) }
 function asLatin1(value: number[]): string { return value.map(byte => String.fromCharCode(byte)).join('') }
+describe('ASCII byte export', () => {
+  it('preserves every CP437 byte without ANSI codes or UTF-8 encoding', () => {
+    const editor = new Editor()
+    for (let code = 32; code <= 255; code++) {
+      const index = code - 32
+      editor.paint({ x: index % 80, y: Math.floor(index / 80) }, { code, fg: 14, bg: 1 })
+    }
+    const output = [...asciiChunks(editor.cells)].flatMap(chunk => [...chunk])
+    expect(output).toEqual([
+      ...Array.from({ length: 80 }, (_, i) => i + 32), 13, 10,
+      ...Array.from({ length: 80 }, (_, i) => i + 112), 13, 10,
+      ...Array.from({ length: 64 }, (_, i) => i + 192), 13, 10,
+    ])
+    expect(output).not.toContain(27)
+  })
+  it('preserves leading blanks, colored spaces, full-width rows and sparse gaps in row order', () => {
+    const editor = new Editor()
+    editor.paint({ x: 79, y: 2 }, { code: 32, fg: 7, bg: 1 })
+    editor.paint({ x: 2, y: 0 }, { code: 219, fg: 14, bg: 4 })
+    expect([...asciiChunks(editor.cells)].flatMap(chunk => [...chunk])).toEqual([
+      32, 32, 219, 13, 10, 13, 10, ...Array<number>(80).fill(32), 13, 10,
+    ])
+  })
+  it('streams billion-row gaps with bounded chunks', () => {
+    const iterator = asciiChunks(new Map([[key(0, 1_000_000_000), { code: 65, fg: 7, bg: 0 }]]))
+    for (let i = 0; i < 10; i++) expect(iterator.next().value).toHaveLength(4096)
+    iterator.return(undefined)
+  })
+  it('exports an empty document as an empty file', () => {
+    expect([...asciiChunks(new Editor().cells)]).toEqual([])
+  })
+})
 describe('ANSI byte export', () => {
   it('emits raw CP437 bytes, not UTF-8 glyphs', () => {
     const editor = new Editor()

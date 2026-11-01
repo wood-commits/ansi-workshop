@@ -8,7 +8,7 @@ import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './pri
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
 import { bucketFill, type FillMode } from './fill'
 import { connectedShape, moveShape } from './move'
-import { chooseFile, hasNativeSave, writeAnsi, type AnsiFileHandle } from './save'
+import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle } from './save'
 import { chooseAnsiFile } from './open'
 import { readAnsi } from './import'
 import { AgentPanel } from './AgentPanel'
@@ -260,7 +260,7 @@ export function App() {
       else { setMessage('Open failed. The current document is unchanged.'); report(cause) }
     } finally { abortOpen.current = undefined; setOpening(false) }
   }
-  const save = async (saveAs: boolean) => {
+  const save = async (saveAs: boolean, asciiCopy = false) => {
     if (saving || abortOpen.current) return
     editor.commit()
     setSaving(true); setError('')
@@ -268,13 +268,19 @@ export function App() {
     abortSave.current = controller
     const version = editor.version
     const snapshot = new Map(editor.cells)
+    const outputName = asciiCopy ? `${name.replace(/\.[^.]*$/, '')}.asc` : name
     try {
-      const handle = saveAs || !fileHandle.current ? await chooseFile(name) : fileHandle.current
-      await writeAnsi(snapshot, handle, name, controller.signal)
-      fileHandle.current = handle
+      const handle = asciiCopy ? await chooseFile(outputName, 'ascii')
+        : saveAs || !fileHandle.current ? await chooseFile(name) : fileHandle.current
+      const write = asciiCopy ? writeAscii : writeAnsi
+      await write(snapshot, handle, outputName, controller.signal)
+      if (!asciiCopy) fileHandle.current = handle
       if (handle) {
-        setName(handle.name); editor.markSaved(version)
-        setMessage(`Saved ${handle.name}.`)
+        if (asciiCopy) setMessage(`Saved ASCII copy ${handle.name} without colors. The ANSI document and save destination are unchanged.`)
+        else {
+          setName(handle.name); editor.markSaved(version)
+          setMessage(`Saved ${handle.name}.`)
+        }
       } else {
         setMessage('Download requested. Check your browser downloads; delivery cannot be verified. Use Chrome/Edge for native directory picking.')
       }
@@ -491,6 +497,7 @@ export function App() {
         <button onClick={() => void openFile()} disabled={saving || opening}>Open… <kbd>Ctrl O</kbd></button>
         <button onClick={() => void save(false)} disabled={saving || opening}>Save <kbd>Ctrl S</kbd></button>
         <button onClick={() => void save(true)} disabled={saving || opening}>Save As… <kbd>Ctrl Shift S</kbd></button>
+        <button onClick={() => void save(true, true)} disabled={saving || opening} title="Save a CP437 copy without ANSI codes or colors; keep the ANSI save destination.">Save As ASCII…</button>
       </div></details>
       <details open={openMenu === 'Edit'}><summary onMouseEnter={() => hoverMenu('Edit')} onClick={event => toggleMenu(event, 'Edit')}>Edit</summary><div className="menu-popup wide-menu" onClick={closeMenu}>
         <button onClick={undo} disabled={!editor.canUndo}>Undo <kbd>Ctrl Z</kbd></button>

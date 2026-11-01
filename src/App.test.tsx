@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { App } from './App'
-import { chooseFile, writeAnsi } from './save'
+import { chooseFile, writeAnsi, writeAscii } from './save'
 import { chooseAnsiFile } from './open'
 import { readAnsi } from './import'
 import { Editor, MAX_ROW, pointFromKey, type Cell } from './model'
@@ -19,6 +19,7 @@ vi.mock('./save', () => ({
   hasNativeSave: () => true,
   chooseFile: vi.fn(),
   writeAnsi: vi.fn(),
+  writeAscii: vi.fn(),
 }))
 beforeEach(() => {
   Object.defineProperties(HTMLDialogElement.prototype, {
@@ -44,6 +45,7 @@ beforeEach(() => {
     createWritable: vi.fn(),
   })
   vi.mocked(writeAnsi).mockResolvedValue(undefined)
+  vi.mocked(writeAscii).mockResolvedValue(undefined)
   vi.mocked(chooseAnsiFile).mockResolvedValue({
     file: new File(['test'], 'opened.ans'),
     handle: { name: 'opened.ans', createWritable: vi.fn() },
@@ -66,6 +68,70 @@ async function saveSnapshot() {
   await waitFor(() => expect(writeAnsi).toHaveBeenCalled())
   return vi.mocked(writeAnsi).mock.calls.at(-1)![0]
 }
+function asciiCopy() {
+  fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save As ASCII…' }))
+}
+describe('ASCII copy saving', () => {
+  it('saves a colored snapshot without changing the ANSI name, handle, history or saved identity', async () => {
+    renderClassicEditor()
+    press('F1')
+    await saveSnapshot()
+    press('A')
+    const handle = { name: 'test.asc', createWritable: vi.fn() }
+    vi.mocked(chooseFile).mockResolvedValueOnce(handle)
+    asciiCopy()
+    await waitFor(() => expect(writeAscii).toHaveBeenCalledOnce())
+    expect(chooseFile).toHaveBeenLastCalledWith('test.asc', 'ascii')
+    expect(vi.mocked(writeAscii).mock.calls[0][0].get('1,0')?.code).toBe(65)
+    expect(vi.mocked(writeAscii).mock.calls[0][1]).toBe(handle)
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Saved ASCII copy test.asc'))
+    expect(screen.getByText('test.ans *')).not.toBeNull()
+    press('z', { ctrlKey: true })
+    expect(screen.queryByText('test.ans *')).toBeNull()
+    press('y', { ctrlKey: true })
+    expect(screen.getByText('test.ans *')).not.toBeNull()
+    await saveSnapshot()
+    expect(chooseFile).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(writeAnsi).mock.calls.at(-1)![1]?.name).toBe('test.ans')
+  })
+  it('keeps edits during ASCII saving unsaved and blocks New/Open/another save', async () => {
+    let finish: (() => void) | undefined
+    vi.mocked(writeAscii).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    renderClassicEditor(); press('F1')
+    asciiCopy()
+    await waitFor(() => expect(writeAscii).toHaveBeenCalledOnce())
+    press('A'); press('n', { ctrlKey: true }); press('o', { ctrlKey: true }); press('s', { ctrlKey: true })
+    expect(chooseAnsiFile).not.toHaveBeenCalled()
+    expect(writeAnsi).not.toHaveBeenCalled()
+    expect(vi.mocked(writeAscii).mock.calls[0][0].size).toBe(1)
+    await act(async () => { finish!() })
+    expect(screen.getByText('untitled.ans *')).not.toBeNull()
+  })
+  it('leaves download delivery unverified and does not change the ANSI destination', async () => {
+    vi.mocked(chooseFile).mockResolvedValueOnce(undefined)
+    renderClassicEditor(); press('F1')
+    asciiCopy()
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('delivery cannot be verified'))
+    expect(vi.mocked(writeAscii).mock.calls[0][2]).toBe('untitled.asc')
+    expect(screen.getByText('untitled.ans *')).not.toBeNull()
+    await saveSnapshot()
+    expect(chooseFile).toHaveBeenLastCalledWith('untitled.ans')
+  })
+  it('reports picker cancellation and disk errors without changing the document', async () => {
+    vi.mocked(chooseFile).mockRejectedValueOnce(new DOMException('Canceled', 'AbortError'))
+    renderClassicEditor(); press('F1')
+    asciiCopy()
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Save canceled'))
+    expect(writeAscii).not.toHaveBeenCalled()
+    vi.mocked(writeAscii).mockRejectedValueOnce(new Error('Disk full'))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    asciiCopy()
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Disk full'))
+    expect(log).toHaveBeenCalled()
+    expect(screen.getByText('untitled.ans *')).not.toBeNull()
+  })
+})
 function subtractionSnapshot(source: ReadonlyMap<string, Cell>, mask: ReadonlyMap<string, Cell>) {
   const editor = new Editor(source)
   for (const [id, cell] of subtractPrimitive(source, mask)) editor.paint(pointFromKey(id), cell)
@@ -1598,7 +1664,7 @@ describe('editor UI', () => {
     fireEvent.focusIn(screen.getByLabelText('Go to row'))
     expect(file.closest('details')?.open).toBe(false)
     fireEvent.click(file)
-    fireEvent.keyDown(screen.getByRole('button', { name: /^Save As/ }), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Save As…/ }), { key: 'Escape' })
     expect(file.closest('details')?.open).toBe(false)
     expect(document.activeElement).toBe(file)
   })

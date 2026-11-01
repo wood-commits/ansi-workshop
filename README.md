@@ -323,6 +323,13 @@ the desired directory and an `.ans` filename. First Save also opens the picker;
 later Save writes to that same browser-authorized file. The app has no directory
 listing or arbitrary-path filesystem API. Picker cancellation is harmless.
 
+**File > Save As ASCII…** saves a separate `.asc` copy containing raw CP437
+characters and CRLF newlines, without ANSI escape codes or colors. Blocks,
+shading, and box drawing retain their CP437 bytes; this is not strict 7-bit
+ASCII or UTF-8. The current document name, ANSI save destination, and modified
+indicator are unchanged. Use normal Save to preserve your colored artwork.
+ASCII copies use the same native picker or bounded download mode described below.
+
 **Other browsers:** Save requests a download. The browser's own preferences
 control the directory (enable "ask where to save" where supported). A download
 request is not proof of disk delivery, so it does not clear the modified flag.

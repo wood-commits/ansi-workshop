@@ -32,7 +32,7 @@ Reloading loses all in-memory state.
 | `src/gradient.ts` | Aspect-correct linear/radial shading and ordered dithering |
 | `src/fill.ts` | Shared sparse painted-region matching, shape recoloring, enclosed blank-area discovery and filling |
 | `src/move.ts` | All-color connected shape discovery and sparse, edge-clamped move overlays |
-| `src/export.ts` | Bounded binary ANSI chunk generator, DOS-to-ANSI color conversion, sparse row ordering |
+| `src/export.ts` | Bounded binary ANSI/ASCII chunk generators, DOS-to-ANSI color conversion, shared sparse row ordering |
 | `src/import.ts` | Streaming CP437/ANSI decoder, bounded control parsing, sparse cursor coordinates, cancellation |
 | `src/open.ts` | Browser-authorized native open picker and read-only file-input fallback |
 | `src/save.ts` | Native picker capability, streamed writable lifecycle, cancellation, bounded download fallback |
@@ -362,6 +362,15 @@ invalidate the art raster cache without changing the document.
 6. Close on success; abort on failure/cancellation. Report errors to the UI.
 7. Mark only the snapshot's version saved after a successful native close.
    A download request cannot prove disk delivery and stays modified.
+
+File > Save As ASCII saves a separate `.asc` copy with CP437 character bytes
+and CRLFs, but no reset/clear/home, SGR colors, or other ANSI escape codes.
+Both generators share sparse row ordering, gap streaming, and stored-space
+handling; empty ASCII output is a zero-byte file. Both formats use the same
+writable lifecycle and 64 MiB download cap. ASCII copy saving always chooses
+a separate destination and never replaces the ANSI handle/name or marks the
+model version saved, since it discards colors. Editing during either operation
+does not change the captured snapshot.
 
 Open and Save share a native-file-access capability guard. Electron hosts,
 including VS Code's integrated browser, can expose picker functions while
