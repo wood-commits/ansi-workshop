@@ -117,11 +117,14 @@ their canvas keyboard shortcuts remain available.
 Click a menu heading to open it, then hover another heading to switch menus
 without another click. Hovering with all menus closed does not open one.
 
-- **Canvas:** 80 fixed columns, with no configured document line limit. Click
+- **Canvas:** 80 columns by default, with no configured document line limit.
+  **Settings > New/Open columns** accepts 1-512 columns for the next document;
+  it never resizes existing art. Open uses a valid SAUCE width when present,
+  otherwise this setting. Click
   and drag to paint the selected CP437 character; skipped pointer positions are
   interpolated. Choose Erase to restore default blank cells. The canvas has no
   cell grid overlay; the column ruler and row numbers provide position guides.
-  A thin right-edge border marks the end of column 80.
+  A thin right-edge border marks the document's last column.
 - **Draw modes:** Full Block is the default and retains selected-character
   drawing. Choose Half Block in Draw's Mode selector to draw at half-row
   resolution using only upper/lower CP437 half blocks with the selected FG/BG.
@@ -151,6 +154,11 @@ without another click. Hovering with all menus closed does not open one.
   function-key palette, all-characters drawer, and brush sample.
   Settings survive New/Open, but reset on reload; no preferences or art are
   automatically persisted. Changing display settings does not edit the document.
+  **Character width** independently selects 8px (default) or VGA-compatible 9px:
+  IBM glyphs keep their original eight pixels, with the eighth pixel repeated
+  in column nine only for CP437 192-223. Other glyphs have a blank ninth pixel.
+  The chosen width scales with zoom and applies to both canvases and glyph samples.
+  Consolas fits the selected cell width using its system-font renderer.
 - **Primitives:** choose Primitive, then Rectangle, Circle / ellipse, Rounded
   rectangle, or Star, with Filled or Outline style and Draw or Subtract mode.
   Drag to size the shape.
@@ -260,7 +268,14 @@ without another click. Hovering with all menus closed does not open one.
 - **All characters:** expand the drawer to select every byte from 32-255:
   printable ASCII, CP437's house at 127, and the extended block/line/symbol set.
   Control bytes 0-31 are deliberately unavailable as brush characters.
-- **Colors:** choose from 16 foreground and eight background colors. With the
+- **Colors:** classic ANSI uses 16 foreground and eight background colors.
+  Choose **Settings > New/Open ANSI mode > iCE Colors** before New/Open for
+  16 background colors, including color swapping and Ctrl+arrow cycling.
+  Open detects the iCE bit in SAUCE automatically; files without SAUCE use
+  the selected mode. iCE interprets SGR 5 as steady background intensity,
+  never animated blink, and SGR 25/reset removes that intensity.
+  Classic mode still rejects blink and bright backgrounds.
+  With the
   canvas focused, Ctrl+Left/Right cycles the foreground backward/forward and
   Ctrl+Up/Down cycles the background backward/forward. Both wrap around without
   moving the cursor or modifying existing art. The swap button exchanges colors;
@@ -279,7 +294,7 @@ without another click. Hovering with all menus closed does not open one.
   extend the marquee beyond the visible rows. Moving farther outside scrolls
   faster. Return inside to pause scrolling, or release to finish the selection.
   Edit contains copy, cut, paste at cursor, horizontal/vertical flips, delete,
-  and deselect. Paste is opaque, including blank cells, and clips at column 80.
+  and deselect. Paste is opaque, including blank cells, and clips at the document's last column.
   Flip operations mirror recognized directional glyphs as well as positions.
   The clipboard is internal to this page, not the operating-system clipboard.
 - **Undo/redo:** each pointer stroke or block action is one undo step.
@@ -308,7 +323,7 @@ typing in the row field or color/palette controls.
 
 ## TundraDraw (24-bit RGB)
 
-Choose **File > New TundraDraw…** to start an 80-column RGB document, or
+Choose **File > New TundraDraw…** to start an RGB document using New/Open columns (default 80), or
 **File > Open** to select a `.tnd` file. TundraDraw uses binary CP437 and
 24-bit RGB foreground/background colors, not 16-bit color or ANSI truecolor
 escape sequences. Classic `.ans` documents retain 16 foregrounds, eight
@@ -332,10 +347,11 @@ Save/Save As writes `.tnd` using the same authorized native-file or explicit
 download lifecycle as ANSI. Save As ASCII remains a separate colorless copy.
 SAUCE00 Character/TundraDraw metadata is preserved and editable. SAUCE flag
 bits (including the legacy iCE bit) are retained but do not control RGB colors.
-Agent access and experimental Ansimation are currently ANSI-only.
+Agent access and experimental Ansimation support only 80-column classic ANSI documents.
 
-New and Ctrl+N retain the current document format. **New ANSI…** in a
-TundraDraw document returns to classic mode; opening `.ans` also does so.
+New and Ctrl+N retain TundraDraw mode; otherwise they use New/Open ANSI mode.
+**New ANSI…** in a TundraDraw document uses the selected ANSI mode.
+Opening `.ans` uses SAUCE mode/width or the New/Open choices.
 These commands start/replace documents, not lossy color conversions.
 Pasting an RGB block into ANSI fails visibly, before changing the destination,
 if its colors cannot be represented by the classic palette.
@@ -351,8 +367,8 @@ and zero-byte skips are supported. A record-boundary DOS EOF byte ends the art;
 only padding spaces and repeated EOF bytes are accepted afterward, not painted
 as extra rows. EOF-valued bytes inside RGB records remain color data.
 Malformed/truncated records, control glyphs,
-non-80-column positions and unsupported SAUCE types
-fail without replacing the current document. Classic ANSI still rejects iCE flags.
+positions outside the selected columns and unsupported SAUCE types
+fail without replacing the current document.
 
 ## Open saved ANSI files
 
@@ -369,28 +385,29 @@ latest changes. A successful open resets the cursor, viewport, selection,
 undo/redo history, and agent approvals, and starts with an unmodified document.
 
 Files saved by this editor round-trip raw CP437 bytes, all 16 foregrounds,
-eight backgrounds, colored spaces, row gaps, and column 80. The importer also
-supports CRLF and LF-only newlines, tabs/backspace, 80-column deferred autowrap
+eight backgrounds (16 in iCE mode), colored spaces, row gaps, and the selected width. The importer also
+supports CRLF and LF-only newlines, tabs/backspace, document-width deferred autowrap
 (including explicit enable/disable with `?7h`/`?7l`), ANSI SGR reset,
 bold/normal intensity, default and supported indexed colors, cursor movement
 (`A`-`G`, `H`, `f`, `d`), cursor save/restore (`s`/`u`), line erase (`K`), and
 clear display (`2J`, with the default background). Rows remain sparse with no
 configured line cap; the editor's safe-integer precision boundary still applies.
-Compressed cursor-forward gaps after column 80 follow DOS autowrap onto the
+Compressed cursor-forward gaps after the last column follow DOS autowrap onto the
 next row. A bare LF after a full-width row adds a newline after that wrap;
 CRLF cancels pending wrap, keeping the editor's saved files stable on reopening.
 
 This is not a full terminal emulator or UTF-8 importer. Unsupported controls,
-blink, bright backgrounds, 256-color/truecolor, other display erase modes,
+blink (SGR 6, or SGR 5 outside iCE mode), extended bright backgrounds (SGR 100-107),
+256-color/truecolor, and other display erase modes
 cause a visible error instead of silently losing features.
 Trailing DOS end-of-file bytes (including repeated EOF padding) are accepted;
 other data after EOF is rejected. SAUCE00 trailers and their optional
-comments are accepted for static ASCII/ANSI art with 80-column or unspecified
+comments are accepted for static ASCII/ANSI art with 1-512-column or unspecified
 width. **File > SAUCE…** views, adds, edits, or removes the title, author, group,
 date, and comments. Apply is one undoable edit; Cancel leaves metadata unchanged.
 ANSI saves preserve metadata and font/display hints without applying them to
-the canvas. ASCII and animation copies omit SAUCE. Malformed trailers, other SAUCE file types, non-80-column
-art, and iCE-color files are rejected. SAUCE row counts do not allocate rows or
+the canvas. ASCII and animation copies omit SAUCE. Malformed trailers, other SAUCE file types,
+and widths outside 1-512 are rejected. SAUCE row counts do not allocate rows or
 limit the sparse document.
 
 SAUCE text uses CP437, with limits of 35 bytes for title, 20 each for author/group,
@@ -398,7 +415,11 @@ and 255 comment lines of 64 bytes each. Dates are YYYYMMDD or blank.
 Invalid edits fail visibly rather than being truncated. File size and dimensions
 are recomputed on save; heights beyond 65,535 rows use an unspecified height.
 SAUCE's 32-bit file-size field limits metadata-bearing output to 4 GiB minus
-one byte of ANSI content; remove SAUCE to stream larger files.
+one byte of ANSI content; remove SAUCE to stream larger classic 80-column files.
+Saving iCE or non-80-column art automatically includes a SAUCE record describing
+mode/width, even when descriptive metadata is absent or removed.
+Such files retain the SAUCE file-size limit. Tundra saves also include a width
+record when the width differs from 80. ASCII copies do not retain mode/width hints.
 
 When opened through the native picker, **Save** targets that browser-authorized
 file; the browser may still require write permission. File-input fallback
@@ -445,14 +466,16 @@ viewport-clamped cursor-down sequences. Default trailing blanks and rows are
 omitted; background-colored spaces are retained. Empty screens export just
 the reset/clear sequences.
 
-Foreground uses SGR 30-37 and 90-97; background uses only SGR 40-47.
+Foreground uses SGR 30-37 and 90-97; background uses SGR 40-47.
 Traditional DOS/BBS attributes provide 16 foregrounds and eight backgrounds,
 with the high background attribute bit used for blink. Bright backgrounds exist
 in extended ANSI (SGR 100-107), and iCE color rendering can repurpose the blink
-bit for background intensity, but neither is enabled here. The editor does not
-export blink. Very old BBS terminals may also differ in bright-foreground SGR
+bit for background intensity. Optional iCE mode exports SGR 5/25 with base
+background codes, not SGR 100-107. An ordinary terminal may display these
+as blink; use an iCE-compatible viewer. The editor never animates blink.
+Very old BBS terminals may also differ in bright-foreground SGR
 support; test on the intended BBS. The viewer must interpret bytes as CP437 and
-use an 80-column terminal. Preview does not emulate a terminal's scrolling or
+use the document's configured column count. Preview does not emulate a terminal's scrolling or
 autowrap quirks.
 
 IBM VGA uses a bundled, CP437-indexed bitmap derived from Web437 IBM VGA 8x16.

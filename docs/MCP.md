@@ -9,6 +9,10 @@ network fetching, or changing security settings. Reads expose artwork to the
 client and potentially its model provider; decide whether that is appropriate
 before approving an agent.
 
+Agent access is available only for 80-column classic ANSI documents, not iCE,
+TundraDraw or other widths. New/Open remounts the panel and revokes the previous
+document's grants; these options do not widen MCP coordinate/color schemas.
+
 ## Setup
 
 Agent access requires the local editor origins listed below. A static deployment

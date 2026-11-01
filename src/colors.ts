@@ -1,6 +1,6 @@
 import { ANSI_COLORS, COLOR_NAMES } from './ansi'
 
-export type DocumentFormat = 'ansi' | 'tundra'
+export type DocumentFormat = 'ansi' | 'ice' | 'tundra'
 // Tagged RGB values cannot be mistaken for classic palette indexes.
 const RGB_TAG = 0x1000000
 

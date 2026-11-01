@@ -2,7 +2,9 @@
 
 ANSI Workshop makes old-school ANSI art from **CP437 characters** and classic
 BBS colors. Each cell holds a character, a foreground color, and a background
-color. The canvas is always **80 columns wide**, with no configured row limit.
+color. The canvas defaults to **80 columns wide**, with no configured row limit.
+**Settings > New/Open columns** chooses 1-512 columns for the next document,
+never resizes current art, and is overridden by valid SAUCE widths on Open.
 It includes an experimental canned-transition mode, not a timeline or a full
 terminal emulator.
 
@@ -129,8 +131,13 @@ supported. Control bytes are not available as drawing characters.
 
 ### Pick colors
 
-There are **16 foregrounds** and **eight backgrounds**, with no bright
-backgrounds or blink. Colors affect new characters and drawing; picking a
+Classic ANSI has **16 foregrounds** and **eight backgrounds**, with no bright
+backgrounds or blink. Before New/Open, choose **Settings > New/Open ANSI mode >
+iCE Colors** for 16 backgrounds. SAUCE's iCE flag automatically selects the mode;
+files without metadata use this setting. iCE treats SGR 5 as steady background
+intensity, not animated blink. Swapping and Ctrl+arrows use all 16 backgrounds
+in this mode. Use an iCE-compatible viewer; ordinary terminals may blink.
+Colors affect new characters and drawing; picking a
 color alone does not recolor existing art.
 
 - **Ctrl+Left/Right** cycles foreground colors while the canvas is focused.
@@ -475,6 +482,10 @@ The VGA preview also supports drag-to-select, regardless of the active tool.
 - In **Settings**, independently choose **IBM VGA 8x16** or **Consolas**, and
   **Pixel perfect (8x16)**, **1.25x (10x20)**, or **2x (16x32)** cell size.
   Display changes do not modify the document or its saved state.
+  **Character width** chooses native 8px or 9px independently of zoom.
+  IBM 9px rendering preserves the original glyph and repeats its eighth pixel
+  in the ninth column for CP437 192-223 only; other ninth columns are blank.
+  Preview and glyph samples follow this setting. Consolas fits the wider cell.
 
 The IBM bitmap is the default classic appearance. Consolas depends on installed
 fonts and can look different across computers. The 1.25x bitmap enlargement has
@@ -503,7 +514,7 @@ fields, select controls, or dialogs. On macOS, **Cmd** can replace **Ctrl**.
 | Delete | Erase at the cursor |
 | Backspace / Delete with a selection | Clear the selected block |
 | Shift+arrows | Extend a selection |
-| Ctrl+A | Select all 80 columns through the last nondefault row |
+| Ctrl+A | Select all document columns through the last nondefault row |
 | Ctrl+C / X / V | Copy / cut / paste a block |
 | Ctrl+Left / Right | Cycle foreground backward / forward |
 | Ctrl+Up / Down | Cycle background backward / forward |
@@ -527,7 +538,7 @@ placement, other canvas shortcuts and wheel scrolling pause.
 
 For RGB art, choose **File > New TundraDraw…**, or Open a `.tnd` file.
 TundraDraw uses **24-bit RGB** foregrounds and backgrounds with the same
-80-column CP437 drawing tools. Its sidebar has RGB pickers, 16 color presets
+document-width CP437 drawing tools. Its sidebar has RGB pickers, 16 color presets
 for each ink, and a compact swatch grid. **User Defined** contains optional named
 swatches (Save FG/BG swatch); **Currently Used** follows the current drawing
 and undo/redo, with 64 colors per page. Hover, keyboard-focus, or click a swatch
@@ -537,8 +548,9 @@ close a swatch's actions.
 Up to 64 named swatches stay in memory only; New/Open/reload clears them and
 they are not stored in `.tnd`. Normal Save/Save As writes TundraDraw bytes,
 including optional SAUCE metadata. Ctrl+arrows cycle presets.
-Agent access and Ansimation remain ANSI-only.
-New/Ctrl+N retains the format; **New ANSI…** returns to classic mode without
+Agent access and Ansimation remain 80-column classic ANSI only.
+New/Ctrl+N retains TundraDraw; otherwise it uses New/Open ANSI mode.
+**New ANSI…** uses the selected ANSI mode without
 converting existing artwork. See [TundraDraw compatibility](../README.md#tundradraw-24-bit-rgb)
 for supported records and the format's 32-bit row boundary.
 
@@ -550,8 +562,8 @@ A successful open resets cursor position, view, selection, and undo/redo history
 It also disconnects agent access. The opened document starts unmodified.
 Files are read in the browser, not uploaded.
 
-This editor reads static 80-column CP437 ANSI art, not UTF-8 text or every ANSI
-terminal feature. Blink, bright backgrounds/iCE colors, truecolor, and unsupported
+This editor reads static CP437 ANSI art with 1-512 columns, not UTF-8 text or every ANSI
+terminal feature. Animated blink, extended bright backgrounds, truecolor, and unsupported
 controls produce visible errors. Supported static SAUCE metadata is preserved
 on normal ANSI saves; font/display hints do not change canvas settings.
 See [file compatibility](../README.md#open-saved-ansi-files) for the exact limits.
@@ -563,6 +575,8 @@ comments. Files without metadata show an empty draft; **Apply** adds a SAUCE00
 record. **Cancel** or Escape discards the draft. **Remove SAUCE** removes the
 record. Apply/removal is one undoable document edit and marks the file modified;
 save normally to write the change. New starts without metadata.
+For iCE or non-80-column documents, saving still includes a minimal SAUCE record
+for mode/width after removing descriptive metadata. ASCII copies omit these hints.
 
 Text uses CP437: title allows 35 bytes, author/group 20 each, and comments up to
 255 lines of 64 bytes. Enter a real date as YYYYMMDD, or leave it blank.
@@ -570,7 +584,8 @@ Unsupported characters, invalid dates, and overlong fields show an error without
 changing the document. Read-only format information shows the preserved font
 and display hints. ANSI save recomputes size/dimensions; heights over 65,535 rows
 are unspecified rather than truncating artwork. Metadata-bearing ANSI content
-must fit SAUCE's 32-bit file-size field; remove SAUCE for files over that limit.
+must fit SAUCE's 32-bit file-size field; removing SAUCE permits larger output
+only for classic 80-column documents.
 
 ### Choose the right save mode
 
@@ -604,7 +619,8 @@ Do not close the page while saving.
 ### Share and view the result
 
 Files contain binary **CP437**, ANSI colors, and CRLF newlines, not UTF-8.
-Use an ANSI viewer configured for CP437 and **80 columns**; a generic text
+Use an ANSI viewer configured for CP437 and the **document's column count**
+(and iCE mode when applicable); a generic text
 editor may show escape codes or incorrect characters.
 Default trailing empty cells and rows are omitted; colored spaces are retained.
 Test the output on your intended BBS or viewer, especially older terminals'
@@ -682,7 +698,7 @@ be verified by the editor.
 | Pasting erases nearby art | The whole copied rectangle, including blanks, is opaque. Undo and choose a safer destination. |
 | Save keeps the modified indicator | In download mode this is intentional. Verify the download; newer edits during native saving also remain modified. |
 | Native files cannot be read/written in VS Code | Use standalone Chrome/Edge at the same URL. Save before switching. |
-| An opened file has wrong characters or is rejected | Check CP437, 80-column width, and supported ANSI attributes. UTF-8/iCE/truecolor art is not supported. |
+| An opened file has wrong characters or is rejected | Check CP437, New/Open width/mode (or SAUCE hints), and supported ANSI attributes. UTF-8 and ANSI truecolor art are not supported. |
 | Controls or columns are off-screen | Scroll horizontally inside the editor or scroll the page; try a smaller cell size in Settings. |
 
 Read the status bar and any **Something needs attention** message for details.

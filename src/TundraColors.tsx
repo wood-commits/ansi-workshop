@@ -5,8 +5,9 @@ import { colorCss, rgbColor } from './colors'
 import type { Cell } from './model'
 import type { CanvasFont } from './vgaFont'
 
-export function TundraColors({ fg, bg, code, font, cells, onFg, onBg, onError }: {
+export function TundraColors({ fg, bg, code, font, nativeWidth = 8, cells, onFg, onBg, onError }: {
   fg: number; bg: number; code: number; font: CanvasFont; cells: ReadonlyMap<string, Cell>
+  nativeWidth?: 8 | 9
   onFg(color: number): void; onBg(color: number): void; onError(error: Error): void
 }) {
   const [name, setName] = useState('')
@@ -45,7 +46,7 @@ export function TundraColors({ fg, bg, code, font, cells, onFg, onBg, onError }:
     <div className="panel-heading"><h2>TundraDraw colors</h2><span className="badge">24-bit RGB</span></div>
     <div className="ink-preview">
       <div className="sample-cell" style={{ color: colorCss(fg), backgroundColor: colorCss(bg) }}>
-        <ShadeGlyph code={code} color={colorCss(fg)} font={font} />
+        <ShadeGlyph code={code} color={colorCss(fg)} font={font} nativeWidth={nativeWidth} />
       </div>
       <div><strong>CP437 {code}</strong><span>RGB foreground / background</span></div>
       <button aria-label="Swap foreground and background" onClick={() => { onFg(bg); onBg(fg) }}>⇄</button>

@@ -1,34 +1,38 @@
-import { EMPTY, pointFromKey, validateCell, type Cell } from './model'
-import { withSauce, type SauceMetadata } from './sauce'
+import { EMPTY, WIDTH, pointFromKey, validPoint, validateWidth, validateCell, type Cell } from './model'
+import { emptySauce, withSauce, type SauceMetadata } from './sauce'
 
 const escape = 27
 const ansiOrder = [0, 4, 2, 6, 1, 5, 3, 7]
-export function sgr(cell: Cell, classicBright = false): number[] {
-  validateCell(cell)
+export function sgr(cell: Cell, classicBright = false, format: 'ansi' | 'ice' = 'ansi'): number[] {
+  validateCell(cell, format)
   const fg = (cell.fg < 8 || classicBright ? 30 : 90) + ansiOrder[cell.fg % 8]
-  const bg = 40 + ansiOrder[cell.bg]
-  const attributes = classicBright ? `0;${cell.fg >= 8 ? '1;' : ''}` : ''
+  const bg = 40 + ansiOrder[cell.bg % 8]
+  const attributes = (classicBright ? `0;${cell.fg >= 8 ? '1;' : ''}` : '') +
+    (format === 'ice' ? `${cell.bg >= 8 ? 5 : 25};` : '')
   return [escape, ...Array.from(`[${attributes}${fg};${bg}m`, char => char.charCodeAt(0))]
 }
 
 // Yield bounded byte chunks, including for very distant sparse rows.
-export function* ansiChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMetadata): Generator<Uint8Array<ArrayBuffer>> {
-  if (sauce) {
+export function* ansiChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMetadata, format: 'ansi' | 'ice' = 'ansi', width = WIDTH): Generator<Uint8Array<ArrayBuffer>> {
+  validateWidth(width)
+  if (sauce || format === 'ice' || width !== WIDTH) {
     let height = 1
     for (const id of cells.keys()) height = Math.max(height, pointFromKey(id).y + 1)
-    yield* withSauce(artChunks(cells, true), sauce, height)
-  } else yield* artChunks(cells, true)
+    yield* withSauce(artChunks(cells, true, format, width), sauce ?? emptySauce(), height, format, width)
+  } else yield* artChunks(cells, true, format, width)
 }
 
-export function* asciiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Array<ArrayBuffer>> {
-  yield* artChunks(cells, false)
+export function* asciiChunks(cells: ReadonlyMap<string, Cell>, width = WIDTH): Generator<Uint8Array<ArrayBuffer>> {
+  yield* artChunks(cells, false, 'ansi', width)
 }
 
-function* artChunks(cells: ReadonlyMap<string, Cell>, colors: boolean): Generator<Uint8Array<ArrayBuffer>> {
+function* artChunks(cells: ReadonlyMap<string, Cell>, colors: boolean, format: 'ansi' | 'ice', width: number): Generator<Uint8Array<ArrayBuffer>> {
+  validateWidth(width)
   const rows = new Map<number, Map<number, Cell>>()
   for (const [id, cell] of cells) {
-    validateCell(cell, colors ? 'ansi' : 'tundra')
+    validateCell(cell, colors ? format : 'tundra')
     const { x, y } = pointFromKey(id)
+    if (!validPoint({ x, y }, width)) throw new Error('Export coordinates must be within safe document columns and rows.')
     let row = rows.get(y)
     if (!row) { row = new Map(); rows.set(y, row) }
     row.set(x, cell)
@@ -49,7 +53,7 @@ function* artChunks(cells: ReadonlyMap<string, Cell>, colors: boolean): Generato
     const lastColumn = Math.max(...row.keys())
     for (let x = 0; x <= lastColumn; x++) {
       const cell = row.get(x) ?? EMPTY
-      if (colors && (cell.fg !== previous.fg || cell.bg !== previous.bg)) bytes.push(...sgr(cell))
+      if (colors && (cell.fg !== previous.fg || cell.bg !== previous.bg)) bytes.push(...sgr(cell, false, format))
       bytes.push(cell.code)
       previous = cell
     }

@@ -3,7 +3,8 @@
 ## Start here
 
 Read README.md, docs/ARCHITECTURE.md, and SECURITY.md before changing behavior.
-This is a local-only, 80-column CP437 ANSI editor. Experimental canned
+This is a local-only CP437 ANSI editor, defaulting to 80 columns with validated
+1-512-column New/Open options (never in-place resizing). Experimental canned
 transitions use bounded 80x25 frames; timelines and frame-by-frame editing
 remain out of scope.
 
@@ -16,13 +17,20 @@ remain out of scope.
 - Only byte values 32-255, foreground indexes 0-15, and background indexes 0-7
   are valid classic ANSI cell values. Explicit TundraDraw documents additionally
   allow validated tagged 24-bit RGB inks and all 16 presets for both colors.
-  Keep ANSI import/export, animation, and agent palette limits unchanged.
-  Do not reintroduce bright ANSI backgrounds or blink.
+  Explicit iCE documents allow all 16 indexed backgrounds, interpreting SGR 5
+  as steady background intensity and SGR 25/reset as clearing it. Classic ANSI
+  remains eight-background; no animated blink or extended bright backgrounds.
+  Keep animation and agent palette/width limits unchanged; expose those
+  workflows only for 80-column classic ANSI documents.
   Never let user-controlled characters introduce terminal control sequences.
 - Use model transactions: one pointer stroke/block action is one undo step.
   Keep saved document identity correct across undo, redo, and async saving.
 - Export binary CP437, not UTF-8. Stream blank gaps and reset colors before
   line feeds. Test byte arrays, not only visible Unicode output.
+  Preserve document width/iCE mode in SAUCE on save, including minimal trailers
+  without descriptive metadata; validate SAUCE width before decoding.
+  Optional 9px VGA rendering repeats pixel eight only for CP437 192-223;
+  all other ninth columns remain blank. Keep 8px as the default.
 - Only browser-authorized file handles may write native files. Do not add a
   Node filesystem endpoint, arbitrary path parameter, upload, telemetry, CDN,
   external font, or network dependency without an explicit design decision.

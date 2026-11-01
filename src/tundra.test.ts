@@ -113,7 +113,7 @@ describe('Tundra RGB documents', () => {
     const sauce = { ...emptySauce(), title: 'RGB ending in 1A' }
     const chunks = [...tundraChunks(cells, sauce)]
     const withoutEofSeparator = new Blob([...chunks.slice(0, -2), chunks.at(-1)!])
-    expect(await readTundraDocument(withoutEofSeparator, new AbortController().signal)).toEqual({ cells, sauce })
+    expect(await readTundraDocument(withoutEofSeparator, new AbortController().signal)).toEqual({ cells, sauce, width: 80 })
     expect(decode([...header, 2, 219, 26, 26, 52, 86]).get('0,0')?.fg).toBe(rgbColor('#1a3456'))
     expect(() => decode([...header, 2, 219, 26, 26])).toThrow(/Truncated Tundra record/)
     expect(() => decode([...header, 2, 26, 0, 18, 52, 86])).toThrow()
@@ -160,7 +160,7 @@ describe('Tundra RGB documents', () => {
     const sauce = { ...emptySauce(), title: 'RGB art', comments: ['One'] }
     const chunks = [...tundraChunks(cells, sauce)]
     expect(chunks.at(-1)![95]).toBe(8)
-    expect(await readTundraDocument(new Blob(chunks), new AbortController().signal)).toEqual({ cells, sauce })
+    expect(await readTundraDocument(new Blob(chunks), new AbortController().signal)).toEqual({ cells, sauce, width: 80 })
     const wrong = chunks.at(-1)!.slice()
     wrong[95] = 1
     await expect(readTundraDocument(new Blob([...chunks.slice(0, -1), wrong]), new AbortController().signal)).rejects.toThrow('SAUCE file type')
@@ -198,7 +198,7 @@ describe('Tundra RGB documents', () => {
     const saved = [...tundraChunks(editor.cells, editor.sauce)]
     expect(saved.at(-1)![95]).toBe(8)
     expect(saved.at(-1)![105]).toBe(1)
-    expect(await readTundraDocument(new Blob(saved), new AbortController().signal)).toEqual({ cells, sauce: edited })
+    expect(await readTundraDocument(new Blob(saved), new AbortController().signal)).toEqual({ cells, sauce: edited, width: 80 })
     expect(() => validateSauce(edited)).toThrow(/iCE/)
     expect(() => validateSauce(edited, 'tundra')).not.toThrow()
     for (const flags of [-1, 256, 1.5, NaN]) {

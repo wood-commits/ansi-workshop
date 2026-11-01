@@ -1,12 +1,12 @@
-import { key, linePoints, MAX_ROW, validPoint, type Cell, type Point } from './model'
+import { key, linePoints, MAX_ROW, WIDTH, validPoint, type Cell, type Point } from './model'
 
 export interface HalfPoint extends Point { half: 0 | 1 }
 
 export function rasterizeHalfBlockStroke(
-  cells: ReadonlyMap<string, Cell>, start: HalfPoint, end: HalfPoint, ink: Pick<Cell, 'fg' | 'bg'>,
+  cells: ReadonlyMap<string, Cell>, start: HalfPoint, end: HalfPoint, ink: Pick<Cell, 'fg' | 'bg'>, width = WIDTH,
 ): ReadonlyMap<string, Cell> {
   for (const point of [start, end]) {
-    if (!validPoint(point) || point.y > MAX_ROW || (point.half !== 0 && point.half !== 1)) {
+    if (!validPoint(point, width) || point.y > MAX_ROW || (point.half !== 0 && point.half !== 1)) {
       throw new Error('Half-block strokes require safe document coordinates.')
     }
   }

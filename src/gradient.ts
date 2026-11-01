@@ -1,14 +1,14 @@
 import { BLOCK_GLYPHS } from './ansi'
 import { validColor, type DocumentFormat } from './colors'
-import { MAX_ROW, pointFromKey, validPoint, type Cell, type Point } from './model'
+import { MAX_ROW, WIDTH, pointFromKey, validPoint, type Cell, type Point } from './model'
 
 export { paintedRegion as gradientRegion } from './fill'
 
 export type GradientKind = 'linear' | 'radial'
 export interface GradientLine { start: Point; end: Point }
 
-function validatePoint(point: Point): void {
-  if (!validPoint(point) || point.y > MAX_ROW) throw new Error('Gradient coordinates must be within safe document coordinates.')
+function validatePoint(point: Point, width: number): void {
+  if (!validPoint(point, width) || point.y > MAX_ROW) throw new Error('Gradient coordinates must be within safe document coordinates.')
 }
 
 const BAYER = [
@@ -19,9 +19,9 @@ const BAYER = [
 ]
 
 export function rasterizeGradient(
-  region: ReadonlyMap<string, Cell>, kind: GradientKind, start: Point, end: Point, ink: Pick<Cell, 'fg' | 'bg'>, format: DocumentFormat = 'ansi',
+  region: ReadonlyMap<string, Cell>, kind: GradientKind, start: Point, end: Point, ink: Pick<Cell, 'fg' | 'bg'>, format: DocumentFormat = 'ansi', width = WIDTH,
 ): ReadonlyMap<string, Cell> {
-  validatePoint(start); validatePoint(end)
+  validatePoint(start, width); validatePoint(end, width)
   if (!validColor(ink.fg, false, format) || !validColor(ink.bg, true, format)) {
     throw new Error('Gradient colors require valid document foreground and background colors.')
   }
@@ -31,7 +31,7 @@ export function rasterizeGradient(
   if (length === 0) return cells
   for (const [id, cell] of region) {
     const point = pointFromKey(id)
-    validatePoint(point)
+    validatePoint(point, width)
     const x = point.x - start.x, y = (point.y - start.y) * 2
     const t = kind === 'radial' ? Math.hypot(x, y) / length : (x * (dx / length) + y * (dy / length)) / length
     if (BLOCK_GLYPHS.has(cell.code) && cell.code !== 219) {

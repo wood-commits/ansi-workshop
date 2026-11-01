@@ -22,7 +22,7 @@ vi.mock('./tundra', async importOriginal => {
 })
 vi.mock('./import', () => {
   const readAnsi = vi.fn()
-  return { readAnsi, readAnsiDocument: vi.fn(async (...args) => ({ cells: await readAnsi(...args) })) }
+  return { readAnsi, readAnsiDocument: vi.fn(async (...args) => ({ cells: await readAnsi(...args), width: 80, format: 'ansi' })) }
 })
 
 vi.mock('./save', () => ({
@@ -71,6 +71,89 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstub
 const canvas = () => screen.getByLabelText(/^ANSI canvas/)
 const preview = () => screen.getByLabelText(/^Live VGA preview/)
 const press = (key: string, extra = {}) => fireEvent.keyDown(canvas(), { key, ...extra })
+describe('document and character width options', () => {
+  const settings = () => fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+  it('creates wide iCE art, draws at the right edge, wraps typing and preserves bright backgrounds on save/history', async () => {
+    render(<App />)
+    settings()
+    fireEvent.change(screen.getByLabelText('New/Open columns'), { target: { value: '132' } })
+    fireEvent.change(screen.getByLabelText('New/Open ANSI mode'), { target: { value: 'ice' } })
+    fireEvent.change(screen.getByLabelText('Character width'), { target: { value: '9' } })
+    settings()
+    press('n', { ctrlKey: true })
+    expect(canvas().getAttribute('width')).toBe('1230')
+    expect(preview().getAttribute('width')).toBe('1188')
+    expect(screen.queryByRole('button', { name: /Enable agent access/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Background Yellow' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + 130 * 9 + 4, clientY: 8 })
+    fireEvent.pointerMove(canvas(), { clientX: 42 + 131 * 9 + 4, clientY: 8 })
+    fireEvent.pointerUp(canvas(), { clientX: 42 + 131 * 9 + 4, clientY: 8 })
+    press('End'); press('A')
+    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 2')
+    press('F4')
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('130,0')).toEqual({ code: 219, fg: 7, bg: 14 })
+    expect(snapshot.get('131,0')).toEqual({ code: 65, fg: 7, bg: 14 })
+    expect(snapshot.get('0,1')).toEqual({ code: 219, fg: 7, bg: 14 })
+    expect(vi.mocked(writeAnsi).mock.calls.at(-1)!.slice(5)).toEqual(['ice', 132])
+    press('z', { ctrlKey: true })
+    expect((await saveSnapshot()).has('0,1')).toBe(false)
+    press('y', { ctrlKey: true })
+    expect((await saveSnapshot()).get('0,1')?.bg).toBe(14)
+  })
+
+  it('keeps options separate from existing art, validates columns, and cycles/swaps all iCE backgrounds', () => {
+    render(<App />)
+    settings()
+    fireEvent.change(screen.getByLabelText('New/Open columns'), { target: { value: '0' } })
+    expect(canvas().getAttribute('width')).toBe('682')
+    settings()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    press('n', { ctrlKey: true })
+    expect(screen.getByRole('alert').textContent).toContain('columns')
+    expect(log).toHaveBeenCalled()
+    settings()
+    fireEvent.change(screen.getByLabelText('New/Open columns'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('New/Open ANSI mode'), { target: { value: 'ice' } })
+    settings(); press('n', { ctrlKey: true })
+    press('ArrowUp', { ctrlKey: true })
+    expect(screen.getByRole('button', { name: 'Background White' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Yellow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Swap foreground and background' }))
+    expect(screen.getByRole('button', { name: 'Background Yellow' }).getAttribute('aria-pressed')).toBe('true')
+    press('End'); press('F4')
+    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 2')
+  })
+
+  it('opens auto-detected document options and displays the actual width and mode', async () => {
+    vi.mocked(readAnsiDocument).mockResolvedValueOnce({
+      cells: new Map([['131,0', { code: 219, fg: 15, bg: 15 }]]),
+      width: 132, format: 'ice', sauce: { ...emptySauce(), flags: 1 },
+    })
+    render(<App />); fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    expect(canvas().getAttribute('width')).toBe('1098')
+    expect(screen.getByText('CP437 · 132 columns')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: 'iCE Colors' })).not.toBeNull()
+    const dialog = sauceDialog()
+    expect(within(dialog).getByText(/132 columns/)).not.toBeNull()
+    expect(within(dialog).getByText('1 (iCE colors on)')).not.toBeNull()
+  })
+
+  it('changes 9px rendering at every zoom without dirtying art or reverting on New', () => {
+    render(<App />); settings()
+    fireEvent.change(screen.getByLabelText('Character width'), { target: { value: '9' } })
+    expect(canvas().getAttribute('width')).toBe('762')
+    expect(preview().getAttribute('width')).toBe('720')
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: 'double' } })
+    expect(canvas().getAttribute('width')).toBe('1482')
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: 'classic' } })
+    expect(canvas().getAttribute('width')).toBe('922')
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    settings(); press('n', { ctrlKey: true })
+    expect(canvas().getAttribute('width')).toBe('922')
+  })
+})
 describe('editable Bezier paths', () => {
   const clickPath = (x: number, y: number) => {
     fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + x * 8, clientY: y * 16 })
@@ -286,7 +369,7 @@ describe('TundraDraw mode', () => {
   it('opens RGB cleanly, shows Tundra SAUCE information and gates ANSI-only controls', async () => {
     const cells = new Map([['0,0', { code: 219, fg: rgbColor('#123456'), bg: 15 }]])
     vi.mocked(chooseAnsiFile).mockResolvedValue({ file: new File(['test'], 'opened.tnd') })
-    vi.mocked(readTundraDocument).mockResolvedValue({ cells })
+    vi.mocked(readTundraDocument).mockResolvedValue({ cells, width: 80 })
     render(<App />); fileAction('open')
     await screen.findByText('opened.tnd', { selector: '.document-title' })
     expect(screen.getByLabelText('Foreground RGB')).not.toBeNull()
@@ -340,7 +423,7 @@ describe('TundraDraw mode', () => {
   it('edits and saves Tundra SAUCE with the legacy iCE bit without applying ANSI color restrictions', async () => {
     const sauce = { ...emptySauce(), title: 'RGB art', flags: 1 }
     vi.mocked(chooseAnsiFile).mockResolvedValue({ file: new File(['test'], 'opened.tnd') })
-    vi.mocked(readTundraDocument).mockResolvedValue({ cells: new Map(), sauce })
+    vi.mocked(readTundraDocument).mockResolvedValue({ cells: new Map(), sauce, width: 80 })
     render(<App />); fileAction('open')
     await screen.findByText('opened.tnd', { selector: '.document-title' })
     const dialog = sauceDialog()
@@ -393,7 +476,7 @@ describe('SAUCE dialog', () => {
   })
   it('shows imported metadata without dirtying it and clears it on New', async () => {
     const sauce = { ...emptySauce(), title: 'Imported', fontName: 'IBM VGA', flags: 4 }
-    vi.mocked(readAnsiDocument).mockResolvedValueOnce({ cells: new Map(), sauce })
+    vi.mocked(readAnsiDocument).mockResolvedValueOnce({ cells: new Map(), sauce, width: 80, format: 'ansi' })
     render(<App />)
     fileAction('open')
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Opened'))

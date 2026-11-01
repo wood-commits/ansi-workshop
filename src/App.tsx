@@ -6,7 +6,7 @@ import { readTundraDocument } from './tundra'
 import { ArtCanvas, CANVAS_SIZES, ShadeGlyph, VgaPreview, type PointerInput } from './Canvas'
 import type { Tool } from './tools'
 import type { CanvasFont } from './vgaFont'
-import { Editor, EMPTY, MAX_ROW, WIDTH, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
+import { Editor, EMPTY, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
 import { convertPathNode, rasterizePath, removePathNode, type BezierPath, type PathNode } from './path'
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
@@ -105,6 +105,10 @@ export function App() {
   const [showSauce, setShowSauce] = useState(false)
   const [cellSize, setCellSize] = useState<typeof CANVAS_SIZES[number]>(CANVAS_SIZES[0])
   const [font, setFont] = useState<CanvasFont>('ibm-vga')
+  const [nativeWidth, setNativeWidth] = useState<8 | 9>(8)
+  const [columns, setColumns] = useState(String(WIDTH))
+  const [ansiMode, setAnsiMode] = useState<'ansi' | 'ice'>('ansi')
+  const displaySize = useMemo(() => ({ ...cellSize, width: Math.round(cellSize.width * nativeWidth / 8) }), [cellSize, nativeWidth])
   const [name, setName] = useState('untitled.ans')
   const [message, setMessage] = useState('Ready. Click the canvas to draw, or use the keyboard.')
   const [error, setError] = useState('')
@@ -127,13 +131,16 @@ export function App() {
   const selection = useMemo(() => anchor && selectionEnd ? rectangle(anchor, selectionEnd) : undefined, [anchor, selectionEnd])
   const dirty = editor.dirty
   const tundra = editor.format === 'tundra'
+  const ice = editor.format === 'ice'
+  const classic = editor.format === 'ansi' && editor.width === WIDTH
+  const backgroundColors = ice ? ANSI_COLORS : BACKGROUND_COLORS
   const selectedPathNode = pathNode === undefined ? undefined : path?.nodes[pathNode]
   const pathNodeCurved = selectedPathNode && [selectedPathNode.incoming, selectedPathNode.outgoing]
     .some(handle => handle.x !== selectedPathNode.point.x || handle.y !== selectedPathNode.point.y)
   const pathResult = useMemo(() => {
     if (!path?.closed || path.nodes.length < 3) return { revision }
     try {
-      return { revision, cells: rasterizePath(path, { fg, bg }, pathSubtract ? editor.cells : undefined, editor.format) }
+      return { revision, cells: rasterizePath(path, { fg, bg }, pathSubtract ? editor.cells : undefined, editor.format, editor.width) }
     } catch (cause) {
       return { revision, error: cause instanceof Error ? cause.message : String(cause), cause }
     }
@@ -195,7 +202,7 @@ export function App() {
     const draft = pathDraft.current
     if (!draft) { setMessage('Click the canvas to start a path.'); return }
     try {
-      const cells = rasterizePath({ ...draft, closed: true }, { fg, bg }, pathSubtract ? editor.cells : undefined, editor.format)
+      const cells = rasterizePath({ ...draft, closed: true }, { fg, bg }, pathSubtract ? editor.cells : undefined, editor.format, editor.width)
       const version = editor.version
       for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
       editor.commit(); refresh()
@@ -206,7 +213,7 @@ export function App() {
     } catch (cause) { report(cause) }
   }
   const move = (point: Point) => {
-    const next = { x: Math.min(WIDTH - 1, Math.max(0, point.x)), y: clampRow(point.y) }
+    const next = { x: Math.min(editor.width - 1, Math.max(0, point.x)), y: clampRow(point.y) }
     setCursor(next)
     setTop(previous => next.y < previous ? next.y : next.y >= previous + visibleRows ? next.y - visibleRows + 1 : previous)
     return next
@@ -248,7 +255,7 @@ export function App() {
     setPrimitivePreview(undefined)
     if (canceled) { setMessage('Primitive canceled. The document is unchanged.'); return }
     try {
-      const cells = drag.subtract ? subtractPrimitive(editor.cells, drag.cells) : drag.cells
+      const cells = drag.subtract ? subtractPrimitive(editor.cells, drag.cells, editor.width) : drag.cells
       const version = editor.version
       for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
       editor.commit()
@@ -273,7 +280,7 @@ export function App() {
   const place = (character: number) => {
     editor.paint(cursor, { code: character, fg, bg })
     editor.commit()
-    move(cursor.x === WIDTH - 1 ? { x: 0, y: cursor.y + 1 } : { x: cursor.x + 1, y: cursor.y })
+    move(cursor.x === editor.width - 1 ? { x: 0, y: cursor.y + 1 } : { x: cursor.x + 1, y: cursor.y })
     refresh()
   }
   const copy = () => {
@@ -288,7 +295,7 @@ export function App() {
   }
   const paste = () => {
     if (!clipboard) return
-    try { editor.paste(clipboard, cursor); editor.commit(); refresh(); setMessage('Block pasted at cursor (clipped at column 80).') }
+    try { editor.paste(clipboard, cursor); editor.commit(); refresh(); setMessage(`Block pasted at cursor (clipped at column ${editor.width}).`) }
     catch (cause) { report(cause) }
   }
   const flip = (axis: 'x' | 'y') => {
@@ -310,11 +317,14 @@ export function App() {
     pathDraft.current = undefined; pathDrag.current = undefined; setPath(undefined); setPathNode(undefined)
     setError(''); refresh()
   }
-  const newFile = (format: DocumentFormat = 'ansi') => {
+  const newFile = (format: DocumentFormat = tundra ? 'tundra' : ansiMode) => {
     if (saving || abortOpen.current) return
-    if ((editor.dirty || pathDraft.current) && !window.confirm('Discard unsaved changes and start a new screen?')) return
-    replaceDocument(new Editor(undefined, undefined, format), format === 'tundra' ? 'untitled.tnd' : 'untitled.ans')
-    setMessage('New 80-column screen. Rows grow as you draw.')
+    try {
+      const next = new Editor(undefined, undefined, format, Number(columns))
+      if ((editor.dirty || pathDraft.current) && !window.confirm('Discard unsaved changes and start a new screen?')) return
+      replaceDocument(next, format === 'tundra' ? 'untitled.tnd' : 'untitled.ans')
+      setMessage(`New ${next.width}-column ${format === 'ice' ? 'iCE Colors ' : ''}screen. Rows grow as you draw.`)
+    } catch (cause) { report(cause) }
   }
   const openFile = async () => {
     if (saving || abortOpen.current) return
@@ -326,11 +336,14 @@ export function App() {
     setOpening(true); setError('')
     setMessage('Choose an ANSI or TundraDraw file to open. The current document stays in memory until opening succeeds.')
     try {
+      const width = Number(columns)
+      validateWidth(width)
       const { file, handle } = await chooseAnsiFile(true)
       controller.signal.throwIfAborted()
       setMessage(`Opening ${file.name}…`)
-      const format = /\.tnd$/i.test(file.name) ? 'tundra' : 'ansi'
-      const { cells, sauce } = await (format === 'tundra' ? readTundraDocument : readAnsiDocument)(file, controller.signal)
+      const document = /\.tnd$/i.test(file.name)
+        ? { ...await readTundraDocument(file, controller.signal, width), format: 'tundra' as const }
+        : await readAnsiDocument(file, controller.signal, width, ansiMode)
       controller.signal.throwIfAborted()
       if (((revisionCounter.current !== startingRevision && editor.dirty) ||
            (pathDraft.current && pathDraft.current !== startingPath)) &&
@@ -338,7 +351,7 @@ export function App() {
         setMessage('Open canceled. The current document is unchanged.')
         return
       }
-      replaceDocument(new Editor(cells, sauce, format), file.name, handle)
+      replaceDocument(new Editor(document.cells, document.sauce, document.format, document.width), file.name, handle)
       setTool('draw')
       setMessage(`Opened ${file.name}.${handle ? ' Save writes to this browser-authorized file.' : ' Use Save As to choose where to write; this file selection grants read access only.'}`)
     } catch (cause) {
@@ -360,8 +373,9 @@ export function App() {
     try {
       const handle = asciiCopy ? await chooseFile(outputName, 'ascii')
         : saveAs || !fileHandle.current ? await (tundra ? chooseFile(name, 'tundra') : chooseFile(name)) : fileHandle.current
-      if (asciiCopy) await writeAscii(snapshot, handle, outputName, controller.signal)
-      else await (tundra ? writeTundra : writeAnsi)(snapshot, handle, outputName, controller.signal, sauce)
+      if (asciiCopy) await writeAscii(snapshot, handle, outputName, controller.signal, editor.width)
+      else if (tundra) await writeTundra(snapshot, handle, outputName, controller.signal, sauce, editor.width)
+      else await writeAnsi(snapshot, handle, outputName, controller.signal, sauce, editor.format === 'ice' ? 'ice' : 'ansi', editor.width)
       if (!asciiCopy) fileHandle.current = handle
       if (handle) {
         if (asciiCopy) setMessage(`Saved ASCII copy ${handle.name} without colors. The ANSI document and save destination are unchanged.`)
@@ -399,8 +413,8 @@ export function App() {
         const cycle = (value: number, count: number, delta: number) => value < count ? (value + count + delta) % count : delta > 0 ? 0 : count - 1
         if (event.key === 'ArrowLeft') setFg(value => cycle(value, ANSI_COLORS.length, -1))
         if (event.key === 'ArrowRight') setFg(value => cycle(value, ANSI_COLORS.length, 1))
-        if (event.key === 'ArrowUp') setBg(value => cycle(value, tundra ? 16 : BACKGROUND_COLORS.length, -1))
-        if (event.key === 'ArrowDown') setBg(value => cycle(value, tundra ? 16 : BACKGROUND_COLORS.length, 1))
+        if (event.key === 'ArrowUp') setBg(value => cycle(value, tundra ? 16 : backgroundColors.length, -1))
+        if (event.key === 'ArrowDown') setBg(value => cycle(value, tundra ? 16 : backgroundColors.length, 1))
         return
       }
       const key = event.key.toLowerCase()
@@ -410,8 +424,8 @@ export function App() {
       if (key === 'c') copy()
       if (key === 'x') cut()
       if (key === 'v') paste()
-      if (key === 'n') newFile(editor.format)
-      if (key === 'a') { setAnchor({ x: 0, y: 0 }); setSelectionEnd({ x: WIDTH - 1, y: editor.lastRow }); setTool('select') }
+      if (key === 'n') newFile()
+      if (key === 'a') { setAnchor({ x: 0, y: 0 }); setSelectionEnd({ x: editor.width - 1, y: editor.lastRow }); setTool('select') }
       return
     }
     const functionKey = /^F([1-9]|1[0-2])$/.exec(event.key)
@@ -434,7 +448,7 @@ export function App() {
       return
     }
     if (event.key === 'Home' || event.key === 'End') {
-      event.preventDefault(); move({ x: event.key === 'Home' ? 0 : WIDTH - 1, y: cursor.y }); return
+      event.preventDefault(); move({ x: event.key === 'Home' ? 0 : editor.width - 1, y: cursor.y }); return
     }
     if (event.key === 'Enter') { event.preventDefault(); move({ x: 0, y: cursor.y + 1 }); return }
     if (event.key === 'Escape') { clearSelection(); setTool('draw'); return }
@@ -459,7 +473,7 @@ export function App() {
     setSelectionEnd(next)
   }
   const point = (next: Point, start: boolean, pointer: PointerInput) => {
-    if (!validPoint(next)) return
+    if (!validPoint(next, editor.width)) { report(new Error('Pointer coordinates exceed the document columns or safe rows.')); return }
     if (tool === 'path') {
       const draft = pathDraft.current ?? { origin: next.y, nodes: [], closed: false }
       const position = { x: next.x + pointer.subcell.x, y: next.y - draft.origin + pointer.subcell.y }
@@ -519,7 +533,7 @@ export function App() {
         setMessage(`Picked foreground ${colorName(cell.fg)} and background ${colorName(cell.bg)}. Brush glyph unchanged.`)
       } else {
         try {
-          const cells = bucketFill(editor.cells, next, fillMode, fg, editor.format)
+          const cells = bucketFill(editor.cells, next, fillMode, fg, editor.format, editor.width)
           for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
           editor.commit(); refresh()
           setMessage(`Filled ${cells.size} connected cells with ${colorName(fg)}. Undo removes the entire fill.`)
@@ -530,11 +544,11 @@ export function App() {
         if (start) {
           clearSelection()
           setError('')
-          moveDrag.current = { start: next, region: connectedShape(editor.cells, next), cells: new Map() }
+          moveDrag.current = { start: next, region: connectedShape(editor.cells, next, editor.width), cells: new Map() }
         }
         const drag = moveDrag.current
         if (!drag) return
-        drag.cells = moveShape(drag.region, { x: next.x - drag.start.x, y: next.y - drag.start.y })
+        drag.cells = moveShape(drag.region, { x: next.x - drag.start.x, y: next.y - drag.start.y }, editor.width)
         setCursor(next)
         setMovePreview(drag.cells)
         setMessage(`Moving ${drag.region.size} connected cells. Release to place; Escape cancels. Shape stays within canvas edges.`)
@@ -549,13 +563,13 @@ export function App() {
           setError('')
           gradientDrag.current = {
             start: next, end: next, kind: gradientKind, fg, bg,
-            region: gradientRegion(editor.cells, next), cells: new Map(),
+            region: gradientRegion(editor.cells, next, true, editor.width), cells: new Map(),
           }
         }
         const drag = gradientDrag.current
         if (!drag) return
         drag.end = next
-        drag.cells = rasterizeGradient(drag.region, drag.kind, drag.start, drag.end, drag, editor.format)
+        drag.cells = rasterizeGradient(drag.region, drag.kind, drag.start, drag.end, drag, editor.format, editor.width)
         setCursor(next)
         setGradientPreview(drag.cells)
         setGradientLine({ start: drag.start, end: drag.end })
@@ -580,7 +594,7 @@ export function App() {
       drag.clientX = pointer.clientX
       setCursor(next)
       try {
-        drag.cells = rasterizePrimitive(drag.kind, drag.filled, drag.start, drag.end, drag.angle, drag)
+        drag.cells = rasterizePrimitive(drag.kind, drag.filled, drag.start, drag.end, drag.angle, drag, editor.width)
         setPrimitivePreview(drag.cells)
         setMessage(`${drag.subtract ? 'Subtraction' : 'Primitive'} preview: ${Math.abs(drag.end.x - drag.start.x) + 1} x ${Math.abs(drag.end.y - drag.start.y) + 1}, ${Math.round(drag.angle * 180 / Math.PI)} degrees. Alt+drag rotates; release to ${drag.subtract ? 'subtract' : 'place'}; Escape cancels.`)
       } catch (cause) {
@@ -595,7 +609,7 @@ export function App() {
         try {
           const pixel = { ...next, half: pointer.half }
           const first = start || !lastHalfPoint.current ? pixel : lastHalfPoint.current
-          const cells = rasterizeHalfBlockStroke(editor.cells, first, pixel, { fg, bg })
+          const cells = rasterizeHalfBlockStroke(editor.cells, first, pixel, { fg, bg }, editor.width)
           for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
           lastHalfPoint.current = pixel
           lastPoint.current = next
@@ -639,7 +653,7 @@ export function App() {
     <header className="app-header">
       <div className="brand-mark" aria-hidden="true">▟</div>
       <div><h1>ANSI<span>WORKSHOP</span></h1><p>A little old school. A limitless canvas.</p></div>
-      <div className="document-title">{name}{dirty ? ' *' : ''}<span>CP437 · 80 columns</span></div>
+      <div className="document-title">{name}{dirty ? ' *' : ''}<span>CP437 · {editor.width} columns</span></div>
       <span className="local-badge"><span />LOCAL ONLY</span>
     </header>
     <nav ref={menuBar} className="menu-bar" aria-label="Application menu" onKeyDown={event => {
@@ -651,8 +665,8 @@ export function App() {
       }
     }}>
       <details open={openMenu === 'File'}><summary ref={fileHeading} onMouseEnter={() => hoverMenu('File')} onClick={event => toggleMenu(event, 'File')}>File</summary><div className="menu-popup" onClick={closeMenu}>
-        <button onClick={() => newFile(editor.format)} disabled={saving || opening}>New <kbd>Ctrl N</kbd></button>
-        {tundra && <button onClick={() => newFile('ansi')} disabled={saving || opening}>New ANSI…</button>}
+        <button onClick={() => newFile()} disabled={saving || opening}>New <kbd>Ctrl N</kbd></button>
+        {tundra && <button onClick={() => newFile(ansiMode)} disabled={saving || opening}>New ANSI…</button>}
         <button onClick={() => newFile('tundra')} disabled={saving || opening}>New TundraDraw…</button>
         <button onClick={() => void openFile()} disabled={saving || opening}>Open… <kbd>Ctrl O</kbd></button>
         <button onClick={() => void save(false)} disabled={saving || opening}>Save <kbd>Ctrl S</kbd></button>
@@ -675,13 +689,25 @@ export function App() {
       </div></details>
       <details open={openMenu === 'Window'}><summary ref={windowHeading} onMouseEnter={() => hoverMenu('Window')} onClick={event => toggleMenu(event, 'Window')}>Window</summary><div className="menu-popup" onClick={closeMenu}>
         <button onClick={() => setShowPreview(value => !value)}>{showPreview ? 'Hide' : 'Show'} VGA Preview</button>
-        <button disabled={saving || opening || tundra} title={tundra ? 'Ansimation supports classic ANSI documents only.' : undefined} onClick={() => {
+        <button disabled={saving || opening || !classic} title={!classic ? 'Ansimation supports 80-column classic ANSI documents only.' : undefined} onClick={() => {
           try { setAnsimation({ source: captureFrame(editor.cells, top), top }) }
           catch (cause) { report(cause) }
         }}>Ansimation (experimental)…</button>
       </div></details>
       <details open={openMenu === 'Settings'}><summary ref={settingsHeading} onMouseEnter={() => hoverMenu('Settings')} onClick={event => toggleMenu(event, 'Settings')}>Settings</summary>
         <div className="menu-popup settings-menu">
+          <label>New/Open columns<input aria-label="New/Open columns" type="number" min={1} max={MAX_COLUMNS} step={1}
+            value={columns} onChange={event => setColumns(event.target.value)} /></label>
+          <label>New/Open ANSI mode<select aria-label="New/Open ANSI mode" value={ansiMode} onChange={event => {
+            const value = event.target.value
+            if (value === 'ansi' || value === 'ice') setAnsiMode(value)
+            else report(new Error('Unknown ANSI document mode.'))
+          }}>
+            <option value="ansi">Classic ANSI (8 backgrounds)</option>
+            <option value="ice">iCE Colors (16 backgrounds)</option>
+          </select></label>
+          <p>Applies to New/Open only, never resizes current art. SAUCE width and iCE flags take precedence on Open.
+            Files without SAUCE use these choices. iCE uses SGR 5 for steady bright backgrounds, not animated blink.</p>
           <label>Canvas font<select aria-label="Canvas font" value={font} onChange={event => {
             const value = event.target.value
             if (value === 'ibm-vga' || value === 'consolas') setFont(value)
@@ -695,6 +721,13 @@ export function App() {
             if (next) setCellSize(next)
             else report(new Error('Unknown canvas cell size.'))
           }}>{CANVAS_SIZES.map(size => <option key={size.id} value={size.id}>{size.label}</option>)}</select></label>
+          <label>Character width<select aria-label="Character width" value={nativeWidth} onChange={event => {
+            const value = Number(event.target.value)
+            if (value === 8 || value === 9) setNativeWidth(value)
+            else report(new Error('Character width must be 8 or 9 pixels.'))
+          }}><option value={8}>8 pixels (default)</option><option value={9}>9 pixels (VGA line graphics)</option></select></label>
+          <p>9px keeps IBM glyphs 8px wide and extends the last pixel only for CP437 192-223. Zoom scales the selected width;
+            Consolas fits the wider cell using the system font.</p>
           <p>{font === 'consolas' ? 'Consolas uses your installed font, with Courier New / monospace fallback. Its pixels vary by browser and platform.'
             : cellSize.id === 'classic' ? 'IBM bitmap enlarged 1.25× with nearest-neighbor pixels. Pixel widths and heights are uneven.'
               : 'Exact IBM bitmap pixels at native size or 2× in the canvas backing image.'}</p>
@@ -739,7 +772,7 @@ export function App() {
         <pre aria-label="Full CC BY-SA 4.0 license">{fontLicense}</pre>
       </div>
     </dialog>
-    {showSauce && <SauceDialog sauce={editor.sauce} rows={editor.lastRow + 1} format={editor.format}
+    {showSauce && <SauceDialog sauce={editor.sauce} rows={editor.lastRow + 1} format={editor.format} columns={editor.width}
       onApply={sauce => {
         const version = editor.version
         editor.setSauce(sauce); refresh()
@@ -870,8 +903,8 @@ export function App() {
     </div>
     <main className="workspace">
       <section className="editor-panel" aria-label="Screen editor">
-        <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>80 × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : 'ANSI'}</span></span></div>
-        <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={cellSize} font={font}
+        <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>{editor.width} × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : ice ? 'ANSI (iCE Colors)' : 'ANSI'}</span></span></div>
+        <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth}
           primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
           halfBlock={tool === 'draw' && drawMode === 'half'}
@@ -891,7 +924,7 @@ export function App() {
               title={value === undefined ? 'Unassigned' : `F${index + 1}: CP437 ${value}`}
               onClick={() => { if (value !== undefined) setCode(value) }}>
               <kbd>F{index + 1}</kbd><span>{value === undefined ? '–'
-                : <ShadeGlyph code={value} color={code === value ? '#c4ee86' : '#dce5f1'} font={font} />}</span>
+                : <ShadeGlyph code={value} color={code === value ? '#c4ee86' : '#dce5f1'} font={font} nativeWidth={nativeWidth} />}</span>
             </button>
           })}</div>
         </section>
@@ -899,11 +932,11 @@ export function App() {
           <div className="character-grid">{CP437.slice(32).map((_glyph, index) => <button key={index + 32}
             aria-label={`CP437 ${index + 32}`} aria-pressed={code === index + 32} title={`CP437 ${index + 32}`}
             onClick={() => setCode(index + 32)}>{index + 32 === 32 || index + 32 === 255 ? '␣'
-              : <ShadeGlyph code={index + 32} color={code === index + 32 ? '#c4ee86' : '#cbd4e2'} width={8} height={16} font={font} />}</button>)}</div>
+              : <ShadeGlyph code={index + 32} color={code === index + 32 ? '#c4ee86' : '#cbd4e2'} width={8} height={16} font={font} nativeWidth={nativeWidth} />}</button>)}</div>
         </details>
       </section>
       <aside className="sidebar">
-        {!tundra && <AgentPanel key={`agents-${agentDocument}`} onCommand={(documentId, command) => {
+        {classic && <AgentPanel key={`agents-${agentDocument}`} onCommand={(documentId, command) => {
           if (lastPoint.current || primitiveDrag.current || gradientDrag.current || moveDrag.current || pathDraft.current) return { ok: false, error: 'A pointer stroke is in progress. Try again after the user finishes drawing.' }
           const result = executeAgentCommand(editor, documentId, revisionCounter.current, command)
           if (result.ok && command.type === 'draw') {
@@ -912,34 +945,35 @@ export function App() {
           }
           return result
         }} />}
-        {tundra && <p className="color-note">Agent access and Ansimation support classic ANSI documents only.</p>}
-        {tundra ? <TundraColors key={`colors-${agentDocument}`} fg={fg} bg={bg} code={code} font={font}
+        {!classic && <p className="color-note">Agent access and Ansimation support 80-column classic ANSI documents only.</p>}
+        {tundra ? <TundraColors key={`colors-${agentDocument}`} fg={fg} bg={bg} code={code} font={font} nativeWidth={nativeWidth}
           cells={editor.cells} onFg={setFg} onBg={setBg} onError={report} /> : <section className="panel color-panel">
-          <div className="panel-heading"><h2>ANSI colors</h2><span className="badge">16 FG / 8 BG</span></div>
+          <div className="panel-heading"><h2>{ice ? 'iCE Colors' : 'ANSI colors'}</h2><span className="badge">16 FG / {backgroundColors.length} BG</span></div>
           <div className="ink-preview">
             <div className="sample-cell" style={{ color: colorCss(fg), backgroundColor: colorCss(bg) }}>
-              <ShadeGlyph code={code} color={colorCss(fg)} font={font} />
+              <ShadeGlyph code={code} color={colorCss(fg)} font={font} nativeWidth={nativeWidth} />
             </div>
             <div><strong>CP437 {code}</strong><span>FG {fg} · BG {bg}</span></div>
-            <button title="Swap colors (bright foreground becomes its base background color)" aria-label="Swap foreground and background" onClick={() => {
-              setFg(bg); setBg(fg % BACKGROUND_COLORS.length)
-              setMessage(fg >= BACKGROUND_COLORS.length ? 'Swapped colors; bright foreground converted to its base color for the eight-color background palette.' : 'Swapped foreground and background.')
+            <button title={ice ? 'Swap colors' : 'Swap colors (bright foreground becomes its base background color)'} aria-label="Swap foreground and background" onClick={() => {
+              setFg(bg); setBg(fg % backgroundColors.length)
+              setMessage(fg >= backgroundColors.length ? 'Swapped colors; bright foreground converted to its base color for the eight-color background palette.' : 'Swapped foreground and background.')
             }}>⇄</button>
           </div>
           {(['Foreground', 'Background'] as const).map(label => {
             const active = label === 'Foreground' ? fg : bg
             return <div className="color-section" key={label}>
               <div className="color-label"><span>{label}</span><span>{COLOR_NAMES[active]}</span></div>
-              <div className="color-grid">{(label === 'Foreground' ? ANSI_COLORS : BACKGROUND_COLORS).map((color, index) => <button key={color}
+              <div className="color-grid">{(label === 'Foreground' ? ANSI_COLORS : backgroundColors).map((color, index) => <button key={color}
                 aria-label={`${label} ${COLOR_NAMES[index]}`} aria-pressed={active === index} title={`${index}: ${COLOR_NAMES[index]}`}
                 style={{ backgroundColor: color }} onClick={() => label === 'Foreground' ? setFg(index) : setBg(index)}>
                 {active === index && <span style={{ color: index === 0 || index === 1 || index === 4 || index === 5 || index === 8 ? '#fff' : '#000' }}>✓</span>}
               </button>)}</div>
             </div>
           })}
-          <p className="color-note">Classic BBS colors: 16 foregrounds, 8 backgrounds. Bright backgrounds and blink are not used.</p>
+          <p className="color-note">{ice ? 'iCE Colors: 16 foregrounds and backgrounds. Bright backgrounds require an iCE-compatible viewer; ordinary terminals may blink.'
+            : 'Classic BBS colors: 16 foregrounds, 8 backgrounds. Bright backgrounds and blink are not used.'}</p>
         </section>}
-        {showPreview && <VgaPreview key={`preview-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} font={font}
+        {showPreview && <VgaPreview key={`preview-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} font={font} nativeWidth={nativeWidth}
           scrollingDisabled={!!(pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview)}
           selection={selection} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
           onEnd={(next, moved) => { if (!moved) clearSelection(); move(next) }} />}

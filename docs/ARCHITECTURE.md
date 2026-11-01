@@ -60,7 +60,11 @@ Reloading loses all in-memory state.
 | `src/styles.css` | Local-only styles and responsive layout |
 | `vite.config.ts` | Loopback-only servers, CSP/response headers, React and Vitest configuration |
 
-Coordinates are zero-based internally and one-based in the UI. Width is 80.
+Coordinates are zero-based internally and one-based in the UI. Each Editor has
+an immutable width, default 80, validated from 1 through 512. New/Open settings
+do not resize existing documents. SAUCE width overrides the import fallback.
+All drawing, block operations, viewport/pointer mapping, and file codecs receive
+the document width; the default-width helpers retain classic behavior.
 Rows are represented as nonnegative safe integers; the UI reserves a small
 arithmetic margin near Number.MAX_SAFE_INTEGER. This is a numeric precision
 boundary, not an allocated document length or a practical screen-size cap.
@@ -75,7 +79,14 @@ its clean baseline; importing does not allocate undo transactions for the file.
 ANSI validation permits foreground indexes 0-15 and background indexes 0-7.
 The picker and Ctrl+arrow cycling share those palette bounds. Swapping a bright
 foreground into the background explicitly reduces it to its base color and
-notifies the user; no bright backgrounds or blink are exported.
+notifies the user; classic mode exports no bright backgrounds or blink.
+The explicit `ice` format permits indexes 0-15 for both inks (not RGB).
+Its decoder treats SGR 5 as background intensity and SGR 25/reset as clearing
+intensity. Export emits SGR 5/25 plus base 40-47 backgrounds, never animated
+blink or extended 100-107 colors. SAUCE flags select the ANSI format on import;
+metadata-free files use the New/Open mode setting. Agent access and Ansimation
+remain restricted to 80-column `ansi` documents; `readAnsi` retains that restriction
+for animation imports while `readAnsiDocument` supports document options.
 
 Each Editor has an immutable document format, defaulting to ANSI. TundraDraw
 additionally accepts foreground/background indexes 0-15 and RGB values tagged
@@ -111,7 +122,11 @@ ANSI output appends DOS EOF, optional COMNT lines, and a SAUCE00 record only whe
 metadata exists. File size/width/height are regenerated from output, preserving
 font/flags/additional type hints. Heights above 65,535 use zero (unspecified);
 32-bit file-size overflow fails explicitly and native writing aborts.
-ASCII/animation copy exports stay metadata-free.
+ASCII/animation copy exports stay metadata-free. iCE and nondefault-width saves
+generate a minimal SAUCE trailer when descriptive metadata is absent, so reopening
+preserves mode/wrapping. Width and the ANSI iCE bit are regenerated from immutable
+document options; Tundra flags retain their original meaning. Such files cannot
+bypass SAUCE's 32-bit size bound by removing descriptive metadata.
 
 Copy and clear iterate stored cells, not every selected coordinate. A Block
 stores its dimensions and sparse relative cells. Paste clears the destination
@@ -130,9 +145,13 @@ Vite emits local cursor assets; no data URLs, new CSP allowances, or network
 dependencies are needed. Preview gestures and the rendered typing cursor are
 unchanged.
 
-The editor canvas has a 42-pixel row gutter and 80 cells. Settings independently
+The editor canvas has a 42-pixel row gutter and document-width cells. Settings independently
 select 8x16 (default), 10x20, or 16x32 cells, and IBM VGA (default) or the former
-Consolas renderer. They are session-only, survive document replacement, and do
+Consolas renderer. A separate 8/9 native-pixel width setting changes scaled
+cell widths and atlas cache keys. In 9px IBM masks, the original eight columns
+are unchanged; column nine repeats column eight for bytes 192-223 only and
+is blank otherwise. Both canvases and glyph samples use this setting.
+They are session-only, survive document replacement, and do
 not modify cells/history/saved identity. ResizeObserver sets the visible row
 count from the available host height minus the 25-pixel column ruler.
 CSS `round(down, …)` snaps the responsive host height to complete cell rows,
@@ -141,7 +160,7 @@ below the gutter without resizing feedback or partial rows. The main canvas
 focus outline is inset so the scroll host and sticky ruler cannot clip it.
 A previously visible cursor remains visible when fewer rows fit.
 Canvas and ruler share a horizontal scroll host; neither is CSS-shrunk to fit.
-Both have a one-pixel right border marking column 80. The canvas uses content-box
+Both have a one-pixel right border marking the final column. The canvas uses content-box
 sizing to preserve every art pixel; the ruler includes that extra pixel in its
 width. Pointer mapping excludes the actual border widths, including asymmetric
 borders.
@@ -374,7 +393,7 @@ row without changing the canvas position when switching tools. Open/Save/Save As
 are File-menu actions with canvas shortcuts, not duplicate toolbar buttons.
 Pending Open/Save operations retain visible toolbar cancellation controls.
 
-The preview renders 80x60 cells with 8x16 backing pixels and CSS thumbnail
+The preview renders document-width by 60 cells with 8x16 or 9x16 backing pixels and CSS thumbnail
 scaling, sharing the top-row offset, cursor, and selection.
 Its bounded scrollbar reuses the main canvas control with 60-row pages and
 an independently cached sparse extent. Both bars update the same top-row state.
@@ -445,12 +464,13 @@ The nine-byte header is version 24 followed by `TUNDRA24`. Command 1 carries
 big-endian unsigned 32-bit row then column; commands 2/4/6 carry a glyph then
 foreground/background/both colors as four-byte fields (unused high byte, R, G, B).
 Export writes the unused byte as zero; import ignores its value. Other supported
-glyphs advance with automatic 80-column wrapping. Format-unrepresentable rows
+glyphs advance with automatic document-width wrapping. Format-unrepresentable rows
 fail explicitly, without imposing a document line cap. SAUCE uses Character
 file type 8 for TundraDraw instead of type 1 for ANSI.
 SAUCE flag bytes are preserved for TundraDraw, including bit 0; RGB fields
 already specify each ink, so the legacy ANSI iCE flag does not affect rendering.
-SAUCE read/edit/export validation is format-aware, keeping ANSI's iCE rejection.
+SAUCE read/edit/export validation is format-aware, keeping classic ANSI palette
+limits while detecting explicit iCE documents.
 Both renderers resolve tagged colors through `colorCss`; IBM glyph atlases
 and Consolas shading caches each retain at most 64 colors.
 
@@ -605,22 +625,22 @@ write access. Neither path sends bytes to Node or a network endpoint.
 
 `AnsiDecoder` consumes binary chunks with a bounded 128-character CSI parameter
 buffer, never a text decoder or executable escape handler. It stores only
-nondefault cells, clamps columns to 80, validates safe row arithmetic, and
-defers column-80 wrapping until the next printable byte, honoring the narrow
+nondefault cells, clamps columns to the document width, validates safe row arithmetic, and
+defers right-edge wrapping until the next printable byte, honoring the narrow
 DEC autowrap mode `CSI ?7 h/l`. Cursor-forward gaps realize pending DOS autowrap
 before moving. LF starts at column zero, adding a newline after pending autowrap;
-CR first cancels pending wrap, so exported 80-column CRLFs do not add blank lines.
+CR first cancels pending wrap, so exported full-width CRLFs do not add blank lines.
 This distinction preserves compressed and LF-only art at its intended positions.
 SGR maps ANSI colors back to DOS
-order. Unsupported controls/attributes, incomplete sequences, blink/bright
-backgrounds, and unrecognized trailing data fail explicitly with a byte offset.
+order. Unsupported controls/attributes, incomplete sequences, animated blink,
+bright backgrounds outside explicit iCE mode, and unrecognized trailing data fail explicitly with a byte offset.
 Repeated DOS EOF bytes are allowed only as trailing padding, including before
 SAUCE; no other content is accepted after the first EOF.
 Before streaming, `readAnsiDocument` inspects the final 128-byte SAUCE00 record and,
 if comments are declared, a bounded `COMNT` block (at most 16,325 bytes). Valid static
 ASCII/ANSI trailers are decoded separately without treating
-metadata as terminal commands. Width must be 80 or unspecified; iCE colors and
-other file types are rejected. FileSize and height are advisory and never used
+metadata as terminal commands. Width must be 1-512 or unspecified; the iCE flag
+selects the indexed-color format, and other file types are rejected. FileSize and height are advisory and never used
 for document allocation. Metadata is retained in the Editor and exported on ANSI
 save. Control bytes in metadata display as CP437 graphical symbols rather than
 terminal commands. Imported legacy dates remain viewable; edits and exports

@@ -1,5 +1,6 @@
 import { CP437, characterCode } from './ansi'
 import type { DocumentFormat } from './colors'
+import { validateWidth, WIDTH } from './model'
 
 export interface SauceMetadata {
   readonly title: string
@@ -73,7 +74,7 @@ export function sameSauce(a: SauceMetadata | undefined, b: SauceMetadata | undef
     a.tinfo4 === b.tinfo4 && a.comments.length === b.comments.length && a.comments.every((line, index) => line === b.comments[index])
 }
 
-export async function readSauce(file: Blob, format: DocumentFormat = 'ansi'): Promise<{ content: Blob; sauce?: SauceMetadata }> {
+export async function readSauce(file: Blob, format: DocumentFormat = 'ansi'): Promise<{ content: Blob; sauce?: SauceMetadata; width?: number }> {
   if (file.size < 128) return { content: file }
   const record = new Uint8Array(await file.slice(file.size - 128).arrayBuffer())
   if (String.fromCharCode(...record.subarray(0, 5)) !== 'SAUCE') return { content: file }
@@ -83,8 +84,7 @@ export async function readSauce(file: Blob, format: DocumentFormat = 'ansi'): Pr
   }
   const view = new DataView(record.buffer)
   const width = view.getUint16(96, true)
-  if (width !== 0 && width !== 80) throw new Error('Only 80-column SAUCE art is supported.')
-  if (format === 'ansi' && (record[105] & 1)) throw new Error('SAUCE iCE colors are not supported; backgrounds must remain in the classic eight-color range.')
+  if (width !== 0) validateWidth(width)
   let end = file.size - 128
   const comments: string[] = []
   if (record[104]) {
@@ -102,12 +102,13 @@ export async function readSauce(file: Blob, format: DocumentFormat = 'ansi'): Pr
     tinfo3: view.getUint16(100, true), tinfo4: view.getUint16(102, true),
   }
   // FileSize and height are advisory, never allocation or content-boundary inputs.
-  return { content: file.slice(0, end), sauce: copySauce(sauce) }
+  return { content: file.slice(0, end), sauce: copySauce(sauce), width: width || undefined }
 }
 
 export function* withSauce(
-  source: Iterable<Uint8Array<ArrayBuffer>>, sauce: SauceMetadata, height: number, format: DocumentFormat = 'ansi',
+  source: Iterable<Uint8Array<ArrayBuffer>>, sauce: SauceMetadata, height: number, format: DocumentFormat = 'ansi', width = WIDTH,
 ): Generator<Uint8Array<ArrayBuffer>> {
+  validateWidth(width)
   validateSauce(sauce, format)
   let size = 0
   for (const chunk of source) {
@@ -132,12 +133,12 @@ export function* withSauce(
   view.setUint32(90, size, true)
   record[94] = 1
   record[95] = format === 'tundra' ? 8 : 1
-  view.setUint16(96, 80, true)
+  view.setUint16(96, width, true)
   view.setUint16(98, height <= 65535 ? height : 0, true)
   view.setUint16(100, sauce.tinfo3, true)
   view.setUint16(102, sauce.tinfo4, true)
   record[104] = sauce.comments.length
-  record[105] = sauce.flags
+  record[105] = format === 'tundra' ? sauce.flags : (sauce.flags & ~1) | Number(format === 'ice')
   record.set(encode(sauce.fontName, 22, 'Font name'), 106)
   yield record
 }

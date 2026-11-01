@@ -12,11 +12,11 @@ function blockColorAt(cell: Cell, x: number, y: number): number | undefined {
   return x >= left && x < left + width && y >= top && y < top + height ? cell.fg : cell.bg
 }
 
-export function subtractPrimitive(cells: ReadonlyMap<string, Cell>, mask: ReadonlyMap<string, Cell>): ReadonlyMap<string, Cell> {
+export function subtractPrimitive(cells: ReadonlyMap<string, Cell>, mask: ReadonlyMap<string, Cell>, width = WIDTH): ReadonlyMap<string, Cell> {
   const edits = new Map<string, Cell>()
   for (const [id, cut] of mask) {
     const point = pointFromKey(id)
-    if (!validPoint(point) || point.y > MAX_ROW) throw new Error('Subtraction coordinates must be within safe document coordinates.')
+    if (!validPoint(point, width) || point.y > MAX_ROW) throw new Error('Subtraction coordinates must be within safe document coordinates.')
     if (!BLOCK_GLYPHS.has(cut.code)) throw new Error('Subtraction requires full or half block masks.')
     const original = cells.get(id)
     if (!original) continue
@@ -24,8 +24,8 @@ export function subtractPrimitive(cells: ReadonlyMap<string, Cell>, mask: Readon
     const code = flipCharacter(cut.code, cut.code === 221 || cut.code === 222 ? 'x' : 'y')
     const remaining = BLOCK_GLYPHS.get(code)
     if (!remaining) throw new Error('Subtraction requires a representable opposite half block.')
-    const [left, top, width] = remaining
-    const colors = width === 1
+    const [left, top, halfWidth] = remaining
+    const colors = halfWidth === 1
       ? [blockColorAt(original, 0.25, top + 0.25), blockColorAt(original, 0.75, top + 0.25)]
       : [blockColorAt(original, left + 0.25, 0.25), blockColorAt(original, left + 0.25, 0.75)]
     const color = colors[0]
@@ -48,9 +48,9 @@ function blocksTouch(a: number, b: number, dx: number, dy: number): boolean {
 }
 
 export function rasterizePrimitive(
-  kind: PrimitiveKind, filled: boolean, start: Point, end: Point, angle: number, ink: Pick<Cell, 'fg' | 'bg'>,
+  kind: PrimitiveKind, filled: boolean, start: Point, end: Point, angle: number, ink: Pick<Cell, 'fg' | 'bg'>, width = WIDTH,
 ): ReadonlyMap<string, Cell> {
-  if (!validPoint(start) || !validPoint(end) || start.y > MAX_ROW || end.y > MAX_ROW || !Number.isFinite(angle)) {
+  if (!validPoint(start, width) || !validPoint(end, width) || start.y > MAX_ROW || end.y > MAX_ROW || !Number.isFinite(angle)) {
     throw new Error('Primitive coordinates must be within safe document coordinates.')
   }
   const origin = Math.min(start.y, end.y)
@@ -90,7 +90,7 @@ export function rasterizePrimitive(
   }
   const cells = new Map<string, Cell>()
   for (let row = Math.max(firstRow, -origin); row <= lastRow; row++) {
-    for (let x = Math.max(0, Math.floor(cx - extentX)); x < Math.min(WIDTH, Math.ceil(cx + extentX)); x++) {
+    for (let x = Math.max(0, Math.floor(cx - extentX)); x < Math.min(width, Math.ceil(cx + extentX)); x++) {
       const coverage: number[] = []
       // Square subcell samples respect the 1:2 VGA character aspect ratio.
       for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 4; sx++) {

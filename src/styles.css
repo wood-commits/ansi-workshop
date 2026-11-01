@@ -40,7 +40,7 @@ h1 span { color: var(--accent); font-weight: 400; margin-left: 6px; }
 .menu-popup { position: absolute; top: 100%; left: 0; width: 240px; padding: 5px; background: #1b2330; border: 1px solid #485368; box-shadow: 0 10px 24px #0009; border-radius: 6px; }
 .menu-popup button { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; text-align: left; background: transparent; padding: 9px; font-size: 12px; }
 .wide-menu { width: 285px; }
-.settings-menu { width: 320px; padding: 14px; }
+.settings-menu { width: 320px; padding: 14px; max-height: calc(100dvh - 150px); overflow-y: auto; }
 .settings-menu label { display: grid; gap: 6px; margin-bottom: 12px; }
 .settings-menu p { color: var(--muted); font-size: 10px; line-height: 1.6; margin-top: 10px; }
 .settings-menu a { color: var(--accent); }

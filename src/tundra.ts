@@ -1,6 +1,6 @@
 import { colorCss, rgbColor } from './colors'
-import { EMPTY, WIDTH, key, pointFromKey, validPoint, validateCell, type Cell } from './model'
-import { readSauce, withSauce, type SauceMetadata } from './sauce'
+import { EMPTY, WIDTH, key, pointFromKey, validPoint, validateCell, validateWidth, type Cell } from './model'
+import { emptySauce, readSauce, withSauce, type SauceMetadata } from './sauce'
 
 const HEADER = [24, 84, 85, 78, 68, 82, 65, 50, 52]
 
@@ -14,6 +14,7 @@ export class TundraDecoder {
   private fg = 7
   private bg = 0
   private ended = false
+  constructor(private readonly width = WIDTH) { validateWidth(width) }
 
   private fail(message: string): never { throw new Error(`${message} (byte ${this.offset}).`) }
 
@@ -37,7 +38,7 @@ export class TundraDecoder {
       if (command === 1) {
         const view = new DataView(new Uint8Array(this.record).buffer)
         this.y = view.getUint32(1); this.x = view.getUint32(5)
-        if (!validPoint({ x: this.x, y: this.y })) this.fail('Tundra position must be within 80 columns')
+        if (!validPoint({ x: this.x, y: this.y }, this.width)) this.fail(`Tundra position must be within ${this.width} columns`)
       } else {
         if (this.y > 0xffffffff) this.fail('Tundra cursor exceeds its 32-bit row field')
         let code = command
@@ -62,7 +63,7 @@ export class TundraDecoder {
           if (cell.code === EMPTY.code && cell.fg === EMPTY.fg && cell.bg === EMPTY.bg) this.cells.delete(id)
           else this.cells.set(id, cell)
         }
-        if (++this.x === WIDTH) { this.x = 0; this.y++ }
+        if (++this.x === this.width) { this.x = 0; this.y++ }
       }
       this.record = []
     }
@@ -74,13 +75,18 @@ export class TundraDecoder {
   }
 }
 
-export function* tundraChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMetadata): Generator<Uint8Array<ArrayBuffer>> {
-  if (sauce) {
+export function* tundraChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMetadata, width = WIDTH): Generator<Uint8Array<ArrayBuffer>> {
+  validateWidth(width)
+  if (sauce || width !== WIDTH) {
     let height = 1
     for (const id of cells.keys()) height = Math.max(height, pointFromKey(id).y + 1)
-    yield* withSauce(tundraChunks(cells), sauce, height, 'tundra')
+    yield* withSauce(tundraArtChunks(cells, width), sauce ?? emptySauce(), height, 'tundra', width)
     return
   }
+  yield* tundraArtChunks(cells, width)
+}
+
+function* tundraArtChunks(cells: ReadonlyMap<string, Cell>, width: number): Generator<Uint8Array<ArrayBuffer>> {
   yield new Uint8Array(HEADER)
   let x = 0, y = 0, fg = 7, bg = 0
   const ordered = [...cells].sort(([a], [b]) => {
@@ -90,7 +96,7 @@ export function* tundraChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMet
   let bytes: number[] = []
   for (const [id, cell] of ordered) {
     const point = pointFromKey(id)
-    if (!validPoint(point) || point.y > 0xffffffff) throw new Error('Tundra export positions require 80 columns and unsigned 32-bit rows.')
+    if (!validPoint(point, width) || point.y > 0xffffffff) throw new Error(`Tundra export positions require ${width} columns and unsigned 32-bit rows.`)
     validateCell(cell, 'tundra')
     if (point.x !== x || point.y !== y) {
       const position = new Uint8Array(9)
@@ -108,15 +114,15 @@ export function* tundraChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMet
       }
     } else bytes.push(cell.code)
     fg = cell.fg; bg = cell.bg
-    x = (point.x + 1) % WIDTH; y = point.y + Number(x === 0)
+    x = (point.x + 1) % width; y = point.y + Number(x === 0)
     if (bytes.length >= 4096) { yield new Uint8Array(bytes); bytes = [] }
   }
   if (bytes.length) yield new Uint8Array(bytes)
 }
 
-export async function readTundraDocument(file: Blob, signal: AbortSignal): Promise<{ cells: ReadonlyMap<string, Cell>; sauce?: SauceMetadata }> {
+export async function readTundraDocument(file: Blob, signal: AbortSignal, columns = WIDTH): Promise<{ cells: ReadonlyMap<string, Cell>; sauce?: SauceMetadata; width: number }> {
   signal.throwIfAborted()
-  const decoder = new TundraDecoder()
+  validateWidth(columns)
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   let abortRead: (() => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
@@ -124,13 +130,15 @@ export async function readTundraDocument(file: Blob, signal: AbortSignal): Promi
     signal.addEventListener('abort', abortRead, { once: true })
   })
   try {
-    const { content, sauce } = await Promise.race([readSauce(file, 'tundra'), aborted])
+    const { content, sauce, width: declaredWidth } = await Promise.race([readSauce(file, 'tundra'), aborted])
     signal.throwIfAborted()
+    const width = declaredWidth ?? columns
+    const decoder = new TundraDecoder(width)
     reader = content.stream().getReader()
     while (true) {
       const { done, value } = await Promise.race([reader.read(), aborted])
       signal.throwIfAborted()
-      if (done) return { cells: decoder.finish(), sauce }
+      if (done) return { cells: decoder.finish(), sauce, width }
       decoder.write(value)
       await new Promise(resolve => setTimeout(resolve, 0))
     }

@@ -116,7 +116,7 @@ function fitBlock(colors: number[], foregrounds: number[], bg: number): Cell {
 }
 
 export function rasterizePath(
-  path: BezierPath, ink: Pick<Cell, 'fg' | 'bg'>, subtractFrom?: ReadonlyMap<string, Cell>, format: DocumentFormat = 'ansi',
+  path: BezierPath, ink: Pick<Cell, 'fg' | 'bg'>, subtractFrom?: ReadonlyMap<string, Cell>, format: DocumentFormat = 'ansi', width = WIDTH,
 ): ReadonlyMap<string, Cell> {
   validateCell({ code: 219, ...ink }, format)
   const polygon = flatten(path)
@@ -134,7 +134,7 @@ export function rasterizePath(
     // Subtraction visits stored art only, including huge blank gaps inside a path.
     for (const [id, original] of subtractFrom) {
       const point = pointFromKey(id)
-      if (!validPoint(point) || point.y > MAX_ROW) throw new Error('Subtraction coordinates must be within safe document coordinates.')
+      if (!validPoint(point, width) || point.y > MAX_ROW) throw new Error('Subtraction coordinates must be within safe document coordinates.')
       const row = point.y - path.origin
       if (point.x + 1 <= left || point.x >= right || row + 1 <= first || row >= last) continue
       if (row !== cachedRow) { cachedRow = row; lines = linesAt(row) }
@@ -158,7 +158,7 @@ export function rasterizePath(
   } else {
     for (let row = Math.max(Math.floor(first), -path.origin); row < Math.ceil(last); row++) {
       const lines = linesAt(row)
-      for (let x = Math.max(0, Math.floor(left)); x < Math.min(WIDTH, Math.ceil(right)); x++) {
+      for (let x = Math.max(0, Math.floor(left)); x < Math.min(width, Math.ceil(right)); x++) {
         const mask = coverage(lines, x)
         if (!mask.some(Boolean)) continue
         const cell = fitBlock(Array.from(mask, inside => inside ? ink.fg : ink.bg), [ink.fg], ink.bg)

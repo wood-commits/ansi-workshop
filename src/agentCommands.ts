@@ -4,6 +4,7 @@ import type { Editor } from './model'
 export function executeAgentCommand(
   editor: Editor, documentId: string, revision: number, input: unknown,
 ): AgentResult {
+  if (editor.format !== 'ansi' || editor.width !== 80) return { ok: false, error: 'Agent access supports 80-column classic ANSI documents only.' }
   const command = AgentCommandSchema.parse(input)
   if (command.type === 'read') {
     const cells = []

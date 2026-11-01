@@ -1,5 +1,5 @@
 import { ansiChunks, asciiChunks } from './export'
-import type { Cell } from './model'
+import { WIDTH, type Cell } from './model'
 import type { SauceMetadata } from './sauce'
 import { tundraChunks } from './tundra'
 
@@ -42,8 +42,10 @@ export async function writeAnsi(
   name: string,
   signal: AbortSignal,
   sauce?: SauceMetadata,
+  format: 'ansi' | 'ice' = 'ansi',
+  width = WIDTH,
 ): Promise<void> {
-  await writeChunks(ansiChunks(cells, sauce), handle, name, signal)
+  await writeChunks(ansiChunks(cells, sauce, format, width), handle, name, signal)
 }
 
 export async function writeAscii(
@@ -51,14 +53,15 @@ export async function writeAscii(
   handle: AnsiFileHandle | undefined,
   name: string,
   signal: AbortSignal,
+  width = WIDTH,
 ): Promise<void> {
-  await writeChunks(asciiChunks(cells), handle, name, signal)
+  await writeChunks(asciiChunks(cells, width), handle, name, signal)
 }
 
 export async function writeTundra(
-  cells: ReadonlyMap<string, Cell>, handle: AnsiFileHandle | undefined, name: string, signal: AbortSignal, sauce?: SauceMetadata,
+  cells: ReadonlyMap<string, Cell>, handle: AnsiFileHandle | undefined, name: string, signal: AbortSignal, sauce?: SauceMetadata, width = WIDTH,
 ): Promise<void> {
-  await writeChunks(tundraChunks(cells, sauce), handle, name, signal)
+  await writeChunks(tundraChunks(cells, sauce, width), handle, name, signal)
 }
 
 export async function writeChunks(

@@ -3,6 +3,10 @@ import { validColor, type DocumentFormat } from './colors'
 import { copySauce, sameSauce, validateSauce, type SauceMetadata } from './sauce'
 
 export const WIDTH = 80
+export const MAX_COLUMNS = 512
+export function validateWidth(width: number): void {
+  if (!Number.isInteger(width) || width < 1 || width > MAX_COLUMNS) throw new Error(`Document columns must be an integer from 1 to ${MAX_COLUMNS}.`)
+}
 export const MAX_ROW = Number.MAX_SAFE_INTEGER - 1000
 export interface Point { x: number; y: number }
 export interface Cell { code: number; fg: number; bg: number }
@@ -17,8 +21,9 @@ export function pointFromKey(value: string): Point {
   const [x, y] = value.split(',').map(Number)
   return { x, y }
 }
-export function validPoint({ x, y }: Point): boolean {
-  return Number.isSafeInteger(x) && x >= 0 && x < WIDTH && Number.isSafeInteger(y) && y >= 0 && y < Number.MAX_SAFE_INTEGER
+export function validPoint({ x, y }: Point, width = WIDTH): boolean {
+  return Number.isInteger(width) && width >= 1 && width <= MAX_COLUMNS &&
+    Number.isSafeInteger(x) && x >= 0 && x < width && Number.isSafeInteger(y) && y >= 0 && y < Number.MAX_SAFE_INTEGER
 }
 export function rectangle(a: Point, b: Point): Rect {
   return { left: Math.min(a.x, b.x), right: Math.max(a.x, b.x), top: Math.min(a.y, b.y), bottom: Math.max(a.y, b.y) }
@@ -31,7 +36,7 @@ export function validateCell(cell: Cell, format: DocumentFormat = 'ansi'): void 
   if (!Number.isInteger(cell.code) || cell.code < 32 || cell.code > 255 ||
       !validColor(cell.fg, false, format) || !validColor(cell.bg, true, format)) {
     throw new Error(format === 'tundra' ? 'Invalid Tundra cell: use CP437 bytes 32-255 and valid RGB colors.'
-      : 'Invalid cell: use CP437 bytes 32-255, foreground colors 0-15, and background colors 0-7.')
+      : `Invalid cell: use CP437 bytes 32-255, foreground colors 0-15, and background colors 0-${format === 'ice' ? 15 : 7}.`)
   }
 }
 
@@ -44,11 +49,12 @@ export class Editor {
   private stateId = 0
   private savedId = 0
   private metadata: SauceMetadata | undefined
-  constructor(cells?: ReadonlyMap<string, Cell>, sauce?: SauceMetadata, readonly format: DocumentFormat = 'ansi') {
+  constructor(cells?: ReadonlyMap<string, Cell>, sauce?: SauceMetadata, readonly format: DocumentFormat = 'ansi', readonly width = WIDTH) {
+    validateWidth(width)
     this.metadata = copySauce(sauce)
     for (const [id, cell] of cells ?? []) {
       const point = pointFromKey(id)
-      if (!validPoint(point)) throw new Error('Document coordinates must be safe, nonnegative integers within 80 columns.')
+      if (!validPoint(point, this.width)) throw new Error(`Document coordinates must be safe, nonnegative integers within ${this.width} columns.`)
       validateCell(cell, this.format)
       this.write(point, cell)
     }
@@ -71,7 +77,7 @@ export class Editor {
     else this.data.set(id, { ...cell })
   }
   paint(point: Point, cell: Cell): void {
-    if (!validPoint(point)) throw new Error('Cursor coordinates must be safe, nonnegative integers within 80 columns.')
+    if (!validPoint(point, this.width)) throw new Error(`Cursor coordinates must be safe, nonnegative integers within ${this.width} columns.`)
     validateCell(cell, this.format)
     const before = this.cell(point)
     if (same(before, cell)) return
@@ -133,13 +139,13 @@ export class Editor {
     }
   }
   paste(block: Block, origin: Point): void {
-    if (!validPoint(origin) || !Number.isSafeInteger(origin.y + block.height - 1) ||
+    if (!validPoint(origin, this.width) || !Number.isSafeInteger(origin.y + block.height - 1) ||
         origin.y + block.height - 1 >= Number.MAX_SAFE_INTEGER) throw new Error('The pasted block exceeds safe coordinate precision.')
     for (const cell of block.cells.values()) validateCell(cell, this.format)
-    this.clear({ left: origin.x, top: origin.y, right: Math.min(WIDTH - 1, origin.x + block.width - 1), bottom: origin.y + block.height - 1 })
+    this.clear({ left: origin.x, top: origin.y, right: Math.min(this.width - 1, origin.x + block.width - 1), bottom: origin.y + block.height - 1 })
     for (const [id, cell] of block.cells) {
       const point = pointFromKey(id)
-      if (origin.x + point.x < WIDTH) this.paint({ x: origin.x + point.x, y: origin.y + point.y }, cell)
+      if (origin.x + point.x < this.width) this.paint({ x: origin.x + point.x, y: origin.y + point.y }, cell)
     }
   }
   flip(rect: Rect, axis: 'x' | 'y'): void {

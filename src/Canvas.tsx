@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { BLOCK_GLYPHS, CP437 } from './ansi'
 import { colorCss } from './colors'
-import { contains, type Cell, type Editor, key, MAX_ROW, type Point, type Rect, WIDTH } from './model'
+import { contains, type Cell, type Editor, key, MAX_ROW, type Point, type Rect } from './model'
 import type { GradientLine } from './gradient'
 import type { BezierPath } from './path'
 import { drawVgaGlyph, type CanvasFont } from './vgaFont'
@@ -25,8 +25,8 @@ const connections = new Map<string, [number, number, number, number]>([
   ['╦', [0, 2, 2, 2]], ['╩', [2, 2, 0, 2]], ['╬', [2, 2, 2, 2]],
 ])
 
-export function drawGlyph(ctx: CanvasRenderingContext2D, code: number, x: number, y: number, w: number, h: number, font: CanvasFont = 'consolas'): void {
-  if (font === 'ibm-vga') { drawVgaGlyph(ctx, code, x, y, w, h); return }
+export function drawGlyph(ctx: CanvasRenderingContext2D, code: number, x: number, y: number, w: number, h: number, font: CanvasFont = 'consolas', nativeWidth: 8 | 9 = 8): void {
+  if (font === 'ibm-vga') { drawVgaGlyph(ctx, code, x, y, w, h, nativeWidth); return }
   if (code === 32 || code === 255) return
   const block = BLOCK_GLYPHS.get(code)
   if (block) {
@@ -89,22 +89,24 @@ export function drawGlyph(ctx: CanvasRenderingContext2D, code: number, x: number
   ctx.fillText(CP437[code], x + w / 2, y + h * 0.79, w)
 }
 
-export function ShadeGlyph({ code, color, width = 16, height = 32, font = 'ibm-vga' }: {
+export function ShadeGlyph({ code, color, width = 16, height = 32, font = 'ibm-vga', nativeWidth = 8 }: {
   code: number
   color: string
   width?: number
   height?: number
   font?: CanvasFont
+  nativeWidth?: 8 | 9
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
+  const scaledWidth = Math.round(width * nativeWidth / 8)
   useEffect(() => {
     const ctx = canvas.current?.getContext('2d')
     if (!ctx) return
-    ctx.clearRect(0, 0, width, height)
+    ctx.clearRect(0, 0, scaledWidth, height)
     ctx.fillStyle = color
-    drawGlyph(ctx, code, 0, 0, width, height, font)
-  }, [code, color, width, height, font])
-  return <canvas ref={canvas} className="shade-glyph" width={width} height={height} aria-hidden="true" />
+    drawGlyph(ctx, code, 0, 0, scaledWidth, height, font, nativeWidth)
+  }, [code, color, scaledWidth, height, font, nativeWidth])
+  return <canvas ref={canvas} className="shade-glyph" width={scaledWidth} height={height} aria-hidden="true" />
 }
 
 interface CanvasProps {
@@ -116,8 +118,9 @@ interface CanvasProps {
   selection: Rect | undefined
   selecting: boolean
   navigating: boolean
-  cellSize?: typeof CANVAS_SIZES[number]
+  cellSize?: { id: string; width: number; height: number }
   font?: CanvasFont
+  nativeWidth?: 8 | 9
   primitive?: boolean
   halfBlock?: boolean
   singleClick?: boolean
@@ -140,7 +143,7 @@ export interface PointerInput {
 }
 
 function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
-  top, rows, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onEnd, onScroll, onKey,
+  top, rows, columns, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onEnd, onScroll, onKey,
 }: Pick<CanvasProps, 'top' | 'selecting' | 'onPoint' | 'onScroll' | 'onKey'> & {
   primitive?: boolean
   halfBlock?: boolean
@@ -148,6 +151,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
   navigating?: boolean
   onNavigate?(point: Point): void
   rows: number
+  columns: number
   cellWidth: number
   gutter: number
   onEnd(point: Point, moved: boolean, canceled: boolean): void
@@ -170,19 +174,19 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
   const pointAt = (position: Pick<PointerEvent, 'clientX' | 'clientY'>, start: boolean, viewportTop = top) => {
     const rect = bounds()
     if (!rect) return undefined
-    const fractionalColumn = ((position.clientX - rect.left) / rect.width * (gutter + WIDTH * cellWidth) - gutter) / cellWidth
+    const fractionalColumn = ((position.clientX - rect.left) / rect.width * (gutter + columns * cellWidth) - gutter) / cellWidth
     let x = Math.floor(fractionalColumn)
     const fractionalRow = (position.clientY - rect.top) / rect.height * rows
     let row = Math.floor(fractionalRow)
     if ((selecting || primitive) && !start) {
-      x = Math.min(WIDTH - 1, Math.max(0, x))
+      x = Math.min(columns - 1, Math.max(0, x))
       row = Math.min(rows - 1, Math.max(0, row))
-    } else if (x < 0 || x >= WIDTH || row < 0 || row >= rows) return undefined
+    } else if (x < 0 || x >= columns || row < 0 || row >= rows) return undefined
     const half: 0 | 1 = fractionalRow - Math.floor(fractionalRow) < 0.5 ? 0 : 1
     return {
       point: { x, y: Math.min(MAX_ROW, viewportTop + row) }, half,
       subcell: { x: Math.min(1, Math.max(0, fractionalColumn - x)), y: Math.min(1, Math.max(0, fractionalRow - row)) },
-      tolerance: { x: 5 * (gutter + WIDTH * cellWidth) / rect.width / cellWidth, y: 5 * rows / rect.height },
+      tolerance: { x: 5 * (gutter + columns * cellWidth) / rect.width / cellWidth, y: 5 * rows / rect.height },
     }
   }
   const updatePointer = (viewportTop = top) => {
@@ -328,9 +332,9 @@ function drawPath(ctx: CanvasRenderingContext2D, path: BezierPath, selected: num
 }
 
 function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
-  editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font,
+  editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font, nativeWidth,
   rows, cellWidth, cellHeight, gutter,
-}: Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'overlay' | 'gradientLine' | 'path' | 'pathNode' | 'font'> & {
+}: Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'overlay' | 'gradientLine' | 'path' | 'pathNode' | 'font' | 'nativeWidth'> & {
   rows: number; cellWidth: number; cellHeight: number; gutter: number
 }) {
   const raster = useRef<HTMLCanvasElement | null>(null)
@@ -338,7 +342,7 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
     if (!canvas.current?.getContext('2d')) return
     const image = raster.current ?? document.createElement('canvas')
     raster.current = image
-    const width = gutter + WIDTH * cellWidth, height = rows * cellHeight
+    const width = gutter + editor.width * cellWidth, height = rows * cellHeight
     if (image.width !== width) image.width = width
     if (image.height !== height) image.height = height
     const ctx = image.getContext('2d')
@@ -357,20 +361,20 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
         ctx.textAlign = 'right'
         ctx.fillText(String(y + 1), gutter - 6, row * cellHeight + 14, gutter - 8)
       }
-      for (let x = 0; x < WIDTH; x++) {
+      for (let x = 0; x < editor.width; x++) {
         const cell = overlay?.get(key(x, y)) ?? editor.cell({ x, y })
         const dx = gutter + x * cellWidth, dy = row * cellHeight
         ctx.fillStyle = colorCss(cell.bg)
         ctx.fillRect(dx, dy, cellWidth, cellHeight)
         ctx.fillStyle = colorCss(cell.fg)
-        drawGlyph(ctx, cell.code, dx, dy, cellWidth, cellHeight, font)
+        drawGlyph(ctx, cell.code, dx, dy, cellWidth, cellHeight, font, nativeWidth)
         if (selection && contains(selection, { x, y })) {
           ctx.fillStyle = '#61ddff44'
           ctx.fillRect(dx, dy, cellWidth, cellHeight)
         }
       }
     }
-  }, [canvas, editor, revision, top, rows, selection, overlay, cellWidth, cellHeight, gutter, font])
+  }, [canvas, editor, revision, top, rows, selection, overlay, cellWidth, cellHeight, gutter, font, nativeWidth])
   useEffect(() => {
     const ctx = canvas.current?.getContext('2d')
     if (!ctx || !raster.current) return
@@ -386,7 +390,7 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
     }
     if (gradientLine) drawGradientLine(ctx, gradientLine, top, cellWidth, cellHeight, gutter)
     if (path) drawPath(ctx, path, pathNode, top, cellWidth, cellHeight, gutter)
-  }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, path, pathNode, cellWidth, cellHeight, gutter, font])
+  }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, path, pathNode, cellWidth, cellHeight, gutter, font, nativeWidth])
 }
 
 function useRowWheel(elementRef: RefObject<HTMLElement | null>, rows: number, disabled: boolean, onScroll: CanvasProps['onScroll'], focusedOnly = false) {
@@ -479,7 +483,7 @@ function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll, label 
   </div>
 }
 
-export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
+export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', nativeWidth = 8, primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
   const host = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const canvasId = useId()
@@ -488,7 +492,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   const [scrollbarHeight, setScrollbarHeight] = useState(0)
   const { width: cellWidth, height: cellHeight } = cellSize
   const pointerHandlers = useCanvasPointer(canvas, {
-    top, rows, cellWidth, gutter: GUTTER, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint,
+    top, rows, columns: editor.width, cellWidth, gutter: GUTTER, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint,
     onEnd: (_point, _moved, canceled) => onEnd(canceled), onScroll, onKey,
   })
   const resizeRows = useEffectEvent((next: number) => {
@@ -509,7 +513,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   }, [cellHeight])
   useRowWheel(canvas, rows, !!(primitive && overlay), onScroll)
   useCanvasRenderer(canvas, {
-    editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font,
+    editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font, nativeWidth,
     rows, cellWidth, cellHeight, gutter: GUTTER,
   })
 
@@ -519,11 +523,11 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
     ...{ '--cell-height': `${cellHeight}px`, '--scrollbar-height': `${scrollbarHeight}px` },
     minHeight: cellSize.id === 'double' ? 25 * cellHeight + VIEWPORT_CHROME_HEIGHT + scrollbarHeight : undefined,
   }}>
-    <div className="column-ruler" aria-hidden="true" style={{ width: GUTTER + WIDTH * cellWidth + 1 }}>
-      <span style={{ width: GUTTER }}>COL</span>{Array.from({ length: 8 }, (_, i) =>
-        <span key={i} style={{ width: 10 * cellWidth }}>{String(i * 10 + 1).padStart(2, '0')}</span>)}
+    <div className="column-ruler" aria-hidden="true" style={{ width: GUTTER + editor.width * cellWidth + 1 }}>
+      <span style={{ width: GUTTER }}>COL</span>{Array.from({ length: Math.ceil(editor.width / 10) }, (_, i) =>
+        <span key={i} style={{ width: Math.min(10, editor.width - i * 10) * cellWidth, overflow: 'hidden' }}>{String(i * 10 + 1).padStart(2, '0')}</span>)}
     </div>
-    <canvas ref={canvas} id={canvasId} width={GUTTER + WIDTH * cellWidth} height={rows * cellHeight}
+    <canvas ref={canvas} id={canvasId} width={GUTTER + editor.width * cellWidth} height={rows * cellHeight}
       data-navigating={navigating} data-font={font} data-path-nodes={path?.nodes.length} data-path-closed={path?.closed} style={{ cursor: TOOL_CURSORS[tool] }}
       tabIndex={0} aria-label={`ANSI canvas, cursor column ${cursor.x + 1}, row ${cursor.y + 1}`}
       {...pointerHandlers}
@@ -535,28 +539,28 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   </div>
 }
 
-type PreviewProps = Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'onPoint' | 'onScroll' | 'onKey' | 'overlay' | 'gradientLine' | 'font'> & {
+type PreviewProps = Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'onPoint' | 'onScroll' | 'onKey' | 'overlay' | 'gradientLine' | 'font' | 'nativeWidth'> & {
   onEnd(point: Point, moved: boolean): void
   scrollingDisabled: boolean
 }
 
-export function VgaPreview({ editor, revision, cursor, top, selection, onPoint, onEnd, onScroll, onKey, overlay, gradientLine, scrollingDisabled, font = 'ibm-vga' }: PreviewProps) {
+export function VgaPreview({ editor, revision, cursor, top, selection, onPoint, onEnd, onScroll, onKey, overlay, gradientLine, scrollingDisabled, font = 'ibm-vga', nativeWidth = 8 }: PreviewProps) {
   const viewport = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const canvasId = useId()
   const extent = useMemo(() => ({ revision, lastRow: editor.lastRow }), [editor, revision])
   useRowWheel(viewport, 60, scrollingDisabled, onScroll, true)
   const pointerHandlers = useCanvasPointer(canvas, {
-    top, rows: 60, cellWidth: 8, gutter: 0, selecting: true, onPoint, onEnd, onScroll, onKey,
+    top, rows: 60, columns: editor.width, cellWidth: nativeWidth, gutter: 0, selecting: true, onPoint, onEnd, onScroll, onKey,
   })
   useCanvasRenderer(canvas, {
-    editor, revision, cursor, top, selection, overlay, gradientLine, font,
-    rows: 60, cellWidth: 8, cellHeight: 16, gutter: 0,
+    editor, revision, cursor, top, selection, overlay, gradientLine, font, nativeWidth,
+    rows: 60, cellWidth: nativeWidth, cellHeight: 16, gutter: 0,
   })
   return <section className="panel preview-panel" aria-label="VGA preview">
-    <div className="panel-heading"><h2>VGA preview</h2><span className="badge">8:16</span></div>
+    <div className="panel-heading"><h2>VGA preview</h2><span className="badge">{nativeWidth}:16</span></div>
     <div ref={viewport} className="preview-viewport">
-    <canvas ref={canvas} id={canvasId} width={640} height={960} tabIndex={0}
+    <canvas ref={canvas} id={canvasId} width={editor.width * nativeWidth} height={960} tabIndex={0}
       data-font={font}
       aria-label={`Live VGA preview, rows ${top + 1} through ${top + 60}`} {...pointerHandlers} />
     <RowScrollbar top={top} rows={60} canvasId={canvasId} label="VGA preview rows"
