@@ -8,6 +8,7 @@ import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './pri
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
 import { bucketFill, type FillMode } from './fill'
 import { connectedShape, moveShape } from './move'
+import { rasterizeHalfBlockStroke, type HalfPoint } from './draw'
 import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle } from './save'
 import { chooseAnsiFile } from './open'
 import { readAnsi } from './import'
@@ -60,6 +61,7 @@ export function App() {
   const [code, setCode] = useState(219)
   const [palette, setPalette] = useState(0)
   const [tool, setTool] = useState<Tool>('draw')
+  const [drawMode, setDrawMode] = useState<'full' | 'half'>('full')
   const [movePreview, setMovePreview] = useState<ReadonlyMap<string, Cell>>()
   const moveDrag = useRef<{
     start: Point; region: ReadonlyMap<string, Cell>; cells: ReadonlyMap<string, Cell>
@@ -102,6 +104,7 @@ export function App() {
   const abortSave = useRef<AbortController | undefined>(undefined)
   const abortOpen = useRef<AbortController | undefined>(undefined)
   const lastPoint = useRef<Point | undefined>(undefined)
+  const lastHalfPoint = useRef<HalfPoint | undefined>(undefined)
   const selection = useMemo(() => anchor && selectionEnd ? rectangle(anchor, selectionEnd) : undefined, [anchor, selectionEnd])
   const dirty = editor.dirty
 
@@ -137,7 +140,7 @@ export function App() {
     return next
   }
   const scroll = useCallback((delta: number) => setTop(previous => clampRow(previous + delta)), [])
-  const commit = () => { editor.commit(); lastPoint.current = undefined; refresh() }
+  const commit = () => { editor.commit(); lastPoint.current = undefined; lastHalfPoint.current = undefined; refresh() }
   const endPointer = (canceled: boolean) => {
     const moving = moveDrag.current
     if (moving) {
@@ -221,6 +224,7 @@ export function App() {
     setAgentDocument(value => value + 1)
     fileHandle.current = handle; setName(filename); clearSelection()
     lastPoint.current = undefined
+    lastHalfPoint.current = undefined
     primitiveDrag.current = undefined; setPrimitivePreview(undefined)
     gradientDrag.current = undefined; setGradientPreview(undefined); setGradientLine(undefined)
     moveDrag.current = undefined; setMovePreview(undefined)
@@ -445,6 +449,18 @@ export function App() {
       selectPoint(next, start)
     } else {
       setCursor(next)
+      if (tool === 'draw' && drawMode === 'half') {
+        try {
+          const pixel = { ...next, half: pointer.half }
+          const first = start || !lastHalfPoint.current ? pixel : lastHalfPoint.current
+          const cells = rasterizeHalfBlockStroke(editor.cells, first, pixel, { fg, bg })
+          for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
+          lastHalfPoint.current = pixel
+          lastPoint.current = next
+          refresh()
+        } catch (cause) { report(cause) }
+        return
+      }
       const cell = tool === 'erase' ? EMPTY : { code, fg, bg }
       for (const value of linePoints(start || !lastPoint.current ? next : lastPoint.current, next)) {
         if (tool === 'recolor') {
@@ -606,7 +622,16 @@ export function App() {
       {opening && <button onClick={() => abortOpen.current?.abort()}>Cancel open</button>}
       {saving && <button onClick={() => abortSave.current?.abort()}>Cancel save</button>}
       <div className="tool-options" role="group" aria-label="Tool options">
-        {tool === 'draw' && <span className="muted">Drag to paint with the selected character and colors</span>}
+        {tool === 'draw' && <div className="primitive-controls">
+          <label>Mode <select aria-label="Draw mode" value={drawMode} onChange={event => {
+            const value = event.target.value
+            if (value === 'full' || value === 'half') setDrawMode(value)
+          }}>
+            <option value="full">Full Block</option><option value="half">Half Block</option>
+          </select></label>
+          <span className="muted">{drawMode === 'full' ? 'Drag to paint with the selected character and colors'
+            : 'Drag at half-row resolution with FG and BG · Matching halves merge · Brush glyph ignored'}</span>
+        </div>}
         {tool === 'cursor' && <span className="muted">Click to move the cursor without painting</span>}
         {tool === 'erase' && <span className="muted">Drag to restore default blank cells</span>}
         {tool === 'recolor' && <span className="muted">Drag to recolor existing cells with FG and BG · Glyphs unchanged · Blank cells untouched</span>}
@@ -657,6 +682,7 @@ export function App() {
         <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={cellSize} font={font}
           primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move'} overlay={movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
+          halfBlock={tool === 'draw' && drawMode === 'half'}
           navigating={tool === 'cursor'} onNavigate={navigate} onPoint={point} onEnd={endPointer} onScroll={scroll} onKey={keyDown} onRows={setVisibleRows} />
         <div className="canvas-footer">
           <button onClick={() => scroll(-visibleRows)} aria-label="Scroll up one page">↑ Page</button>

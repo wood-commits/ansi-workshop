@@ -113,6 +113,7 @@ interface CanvasProps {
   cellSize?: typeof CANVAS_SIZES[number]
   font?: CanvasFont
   primitive?: boolean
+  halfBlock?: boolean
   singleClick?: boolean
   overlay?: ReadonlyMap<string, Cell>
   gradientLine?: GradientLine
@@ -124,12 +125,13 @@ interface CanvasProps {
   onRows(rows: number): void
 }
 
-export interface PointerInput { clientX: number; altKey: boolean }
+export interface PointerInput { clientX: number; altKey: boolean; half: 0 | 1 }
 
 function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
-  top, rows, cellWidth, gutter, selecting, navigating, primitive, singleClick, onNavigate, onPoint, onEnd, onScroll, onKey,
+  top, rows, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onEnd, onScroll, onKey,
 }: Pick<CanvasProps, 'top' | 'selecting' | 'onPoint' | 'onScroll' | 'onKey'> & {
   primitive?: boolean
+  halfBlock?: boolean
   singleClick?: boolean
   navigating?: boolean
   onNavigate?(point: Point): void
@@ -140,7 +142,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
 }) {
   const [dragging, setDragging] = useState(false)
   const dragPointer = useRef<{
-    clientX: number; clientY: number; pointerId: number; altKey: boolean
+    clientX: number; clientY: number; pointerId: number; altKey: boolean; half: 0 | 1
     start: Point; point: Point; moved: boolean
   } | undefined>(undefined)
   const bounds = () => {
@@ -157,19 +159,23 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
     const rect = bounds()
     if (!rect) return undefined
     let x = Math.floor(((position.clientX - rect.left) / rect.width * (gutter + WIDTH * cellWidth) - gutter) / cellWidth)
-    let row = Math.floor((position.clientY - rect.top) / rect.height * rows)
+    const fractionalRow = (position.clientY - rect.top) / rect.height * rows
+    let row = Math.floor(fractionalRow)
     if ((selecting || primitive) && !start) {
       x = Math.min(WIDTH - 1, Math.max(0, x))
       row = Math.min(rows - 1, Math.max(0, row))
     } else if (x < 0 || x >= WIDTH || row < 0 || row >= rows) return undefined
-    return { x, y: Math.min(MAX_ROW, viewportTop + row) }
+    const half: 0 | 1 = fractionalRow - Math.floor(fractionalRow) < 0.5 ? 0 : 1
+    return { point: { x, y: Math.min(MAX_ROW, viewportTop + row) }, half }
   }
   const updatePointer = (viewportTop = top) => {
     const position = dragPointer.current
     if (!position) return
-    const point = pointAt(position, false, viewportTop)
-    if (!point) return
+    const hit = pointAt(position, false, viewportTop)
+    if (!hit) return
+    const { point, half } = hit
     position.point = point
+    position.half = half
     position.moved ||= point.x !== position.start.x || point.y !== position.start.y
     onPoint(point, false, position)
   }
@@ -211,8 +217,10 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
     onBlur: () => finish(true),
     onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
       if (event.button !== 0 || dragPointer.current) return
-      const point = pointAt(event, true)
-      if (!point) return
+      const hit = pointAt(event, true)
+      if (!hit) return
+      const { point, half } = hit
+      const pointer = { clientX: event.clientX, altKey: event.altKey, half }
       event.currentTarget.focus({ preventScroll: true })
       if (onNavigate && (navigating || event.altKey)) {
         event.preventDefault()
@@ -221,16 +229,16 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
       }
       if (singleClick) {
         event.preventDefault()
-        onPoint(point, true, event)
+        onPoint(point, true, pointer)
         return
       }
       event.currentTarget.setPointerCapture(event.pointerId)
       dragPointer.current = {
-        clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, altKey: event.altKey,
+        clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, altKey: event.altKey, half,
         start: point, point, moved: false,
       }
       setDragging(true)
-      onPoint(point, true, event)
+      onPoint(point, true, pointer)
     },
     onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
       const position = dragPointer.current
@@ -243,7 +251,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
     onPointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
       const position = dragPointer.current
       if (!position || event.pointerId !== position.pointerId) return
-      if (primitive && (position.clientX !== event.clientX || position.clientY !== event.clientY)) {
+      if ((primitive || halfBlock) && (position.clientX !== event.clientX || position.clientY !== event.clientY)) {
         position.clientX = event.clientX; position.clientY = event.clientY; position.altKey = event.altKey
         updatePointer()
       }
@@ -403,7 +411,7 @@ function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll }: {
   </div>
 }
 
-export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', primitive, singleClick, overlay, gradientLine, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
+export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', primitive, halfBlock, singleClick, overlay, gradientLine, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
   const host = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const canvasId = useId()
@@ -412,7 +420,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   const [scrollbarHeight, setScrollbarHeight] = useState(0)
   const { width: cellWidth, height: cellHeight } = cellSize
   const pointerHandlers = useCanvasPointer(canvas, {
-    top, rows, cellWidth, gutter: GUTTER, selecting, navigating, primitive, singleClick, onNavigate, onPoint,
+    top, rows, cellWidth, gutter: GUTTER, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint,
     onEnd: (_point, _moved, canceled) => onEnd(canceled), onScroll, onKey,
   })
   const resizeRows = useEffectEvent((next: number) => {

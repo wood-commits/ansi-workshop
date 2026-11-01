@@ -118,6 +118,16 @@ without another click. Hovering with all menus closed does not open one.
   interpolated. Choose Erase to restore default blank cells. The canvas has no
   cell grid overlay; the column ruler and row numbers provide position guides.
   A thin right-edge border marks the end of column 80.
+- **Draw modes:** Full Block is the default and retains selected-character
+  drawing. Choose Half Block in Draw's Mode selector to draw at half-row
+  resolution using only upper/lower CP437 half blocks with the selected FG/BG.
+  This mode ignores the brush glyph and does not use left/right halves or
+  slope-based alternation.
+  Opposite halves with matching FG/BG merge into full blocks; retracing them
+  keeps them full. Other glyphs or different colors are replaced with the new
+  half block and selected background. Each drag remains one undo step;
+  keyboard typing and F-keys are unchanged. The mode survives tool switches
+  and New/Open, but resets on reload.
 - **Recolor:** click and drag across existing art to apply the current foreground
   and background colors without changing any CP437 characters. Blocks, shading,
   text, and colored spaces keep their glyphs; default blank cells stay untouched.

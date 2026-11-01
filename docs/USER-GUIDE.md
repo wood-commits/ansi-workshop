@@ -149,7 +149,7 @@ light or dark art. The typing cursor and VGA preview navigation are unchanged.
 
 | Tool | How to use it |
 | --- | --- |
-| Draw | Click or drag to paint the selected character and both colors. |
+| Draw | Full Block paints the selected character and both colors; Half Block draws at upper/lower half-row resolution. |
 | Cursor | Click to position the typing cursor without painting. |
 | Erase | Click or drag to restore default blank cells. |
 | Recolor | Drag over existing art to change both colors while keeping its characters. Default blank cells are skipped. |
@@ -161,6 +161,25 @@ light or dark art. The typing cursor and VGA preview navigation are unchanged.
 | Eyedropper | Click once to sample foreground and background colors. Dragging does not sample more cells. |
 
 Each drawing stroke or completed shape/block action is one undo step.
+
+### Draw modes
+
+Choose **Draw**, then use its **Mode** selector:
+
+- **Full Block** (default) keeps the original selected-character drawing.
+  Selecting a shading, text, or half-block palette tile still paints that glyph.
+- **Half Block** uses one-column-wide, half-row-high pixels. Click near the top
+  or bottom of a cell to paint its upper or lower half (F5/F6). This mode never
+  chooses F7/F8 left/right blocks or changes behavior based on stroke slope.
+  The selected brush character is ignored; selected FG/BG colors are used.
+  Painting both halves with matching FG/BG merges them into a full block,
+  and retracing keeps it full. Different colors or other glyphs are replaced
+  with the new half block and selected background, rather than mixed.
+
+Skipped pointer positions are interpolated. Release places the final half-row
+position; cancellation or lost capture commits the painted portion as one undo
+step, just like ordinary Draw. Typing, F-keys, Alt+click, and preview navigation
+are unchanged. The mode survives tool switches and New/Open, but not reload.
 
 ### Primitive tool
 

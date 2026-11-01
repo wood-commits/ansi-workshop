@@ -28,6 +28,7 @@ Reloading loses all in-memory state.
 | --- | --- |
 | `src/ansi.ts` | DOS-order 16-color foreground/eight-color background palettes, CP437 display table, F-key palettes, directional glyph reflection |
 | `src/model.ts` | Sparse cells, coordinates, rectangular block operations, Bresenham stroke interpolation, transaction history |
+| `src/draw.ts` | Local-coordinate half-row stroke interpolation and matching-ink half-block merging |
 | `src/primitives.ts` | Aspect-correct rotated primitive coverage, full/half-block rasterization, color-preserving sparse subtraction |
 | `src/gradient.ts` | Aspect-correct linear/radial shading and ordered dithering |
 | `src/fill.ts` | Shared sparse painted-region matching, shape recoloring, enclosed blank-area discovery and filling |
@@ -139,6 +140,20 @@ outside controls a bounded rate; the anchor stays fixed and both viewport and
 endpoint respect safe row coordinates. Release, cancel, lost capture, Escape,
 or focus loss stops scrolling. Replacing the document remounts the canvas and
 cleans up any drag timer. Draw/erase/recolor strokes do not auto-scroll.
+
+Draw defaults to Full Block, preserving selected-character cell painting.
+Half Block maps each pointer to a cell plus its upper/lower half,
+using the same viewport/border/scale mapping as ordinary navigation. Interpolation
+uses square one-column-by-half-row pixels with Bresenham and local doubled row
+offsets, never doubled absolute row coordinates. Unsafe coordinates fail explicitly.
+There is no slope threshold, alternating pattern, or left/right half-block output.
+The sparse segment map merges opposite halves with matching FG/BG into byte 219
+and retains matching full blocks on retracing; otherwise it writes byte 223/220
+with the current FG/BG, replacing incompatible glyphs/colors. Each segment is
+validated before model writes and shares the normal stroke transaction, live
+preview revision, and commit-on-cancel lifecycle. Pointer release includes the
+final subcell position. Alt-click/preview navigation, typing, F-keys, and other
+tools are unchanged. Draw mode is session-only and survives New/Open.
 
 Recolor uses the same captured, Bresenham-interpolated stroke and transaction
 lifecycle as Draw/Erase, including commit on pointer cancellation or lost capture.

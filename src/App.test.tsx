@@ -1405,6 +1405,99 @@ describe('editor UI', () => {
     expect(snapshot.size).toBe(5)
     expect(snapshot.get('2,0')?.code).toBe(219)
   })
+  it.each([
+    { size: 'native', width: 8, height: 16 },
+    { size: 'classic', width: 10, height: 20 },
+    { size: 'double', width: 16, height: 32 },
+  ])('draws half-row strokes at $size size, including the release position, as one undo', async ({ size, width, height }) => {
+    render(<App />)
+    expect((screen.getByLabelText('Draw mode') as HTMLSelectElement).value).toBe('full')
+    expect(screen.getByRole('option', { name: 'Half Block' })).not.toBeNull()
+    expect(screen.queryByRole('option', { name: 'Half-block smoothing' })).toBeNull()
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: size } })
+    fireEvent.keyDown(screen.getByLabelText('Canvas cell size'), { key: 'Escape' })
+    fireEvent.click(screen.getByTitle('F1: CP437 176'))
+    fireEvent.change(screen.getByLabelText('Draw mode'), { target: { value: 'half' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + width / 2, clientY: height / 4 })
+    fireEvent.pointerUp(canvas(), { clientX: 42 + 4.5 * width, clientY: 2.25 * height })
+    const expected = new Map([
+      ['0,0', { code: 223, fg: 7, bg: 0 }],
+      ['1,0', { code: 220, fg: 7, bg: 0 }],
+      ['2,1', { code: 223, fg: 7, bg: 0 }],
+      ['3,1', { code: 220, fg: 7, bg: 0 }],
+      ['4,2', { code: 223, fg: 7, bg: 0 }],
+    ])
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+    fireEvent.change(screen.getByLabelText('Draw mode'), { target: { value: 'full' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + 5.5 * width, clientY: height / 4 })
+    fireEvent.pointerUp(canvas())
+    expect((await saveSnapshot()).get('5,0')?.code).toBe(176)
+  })
+  it.each(['pointerCancel', 'lostPointerCapture', 'blur'] as const)('merges both halves within a cell and commits on %s', async stop => {
+    renderClassicEditor()
+    fireEvent.change(screen.getByLabelText('Draw mode'), { target: { value: 'half' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 5 })
+    fireEvent.pointerMove(canvas(), { clientX: 47, clientY: 15 })
+    fireEvent.pointerMove(canvas(), { clientX: 47, clientY: 5 })
+    fireEvent[stop](canvas())
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 219, fg: 7, bg: 0 }]]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
+  })
+  it.each([
+    { size: 'native', width: 8, height: 16 },
+    { size: 'classic', width: 10, height: 20 },
+    { size: 'double', width: 16, height: 32 },
+  ])('uses only upper/lower blocks on a steep Half Block drag at $size size', async ({ size, width, height }) => {
+    render(<App />)
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    fireEvent.change(screen.getByLabelText('Canvas cell size'), { target: { value: size } })
+    fireEvent.keyDown(screen.getByLabelText('Canvas cell size'), { key: 'Escape' })
+    fireEvent.click(screen.getByTitle('F8: CP437 222'))
+    fireEvent.change(screen.getByLabelText('Draw mode'), { target: { value: 'half' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + width / 4, clientY: height / 4 })
+    fireEvent.pointerMove(canvas(), { clientX: 42 + width / 4, clientY: 1.25 * height })
+    fireEvent.pointerMove(canvas(), { clientX: 42 + width / 4, clientY: 1.25 * height })
+    fireEvent.pointerUp(canvas(), { clientX: 42 + width / 4, clientY: 3.25 * height })
+    const expected = new Map([
+      ['0,0', { code: 219, fg: 7, bg: 0 }],
+      ['0,1', { code: 219, fg: 7, bg: 0 }],
+      ['0,2', { code: 219, fg: 7, bg: 0 }],
+      ['0,3', { code: 223, fg: 7, bg: 0 }],
+    ])
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+  })
+  it('keeps half-block mode navigation-only for Alt/preview and preserves keyboard editing at large rows', async () => {
+    renderClassicEditor()
+    fireEvent.change(screen.getByLabelText('Draw mode'), { target: { value: 'half' } })
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: String(MAX_ROW) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 35 })
+    fireEvent.pointerUp(canvas(), { clientX: 47, clientY: 35 })
+    expect((await saveSnapshot()).get(`0,${MAX_ROW}`)?.code).toBe(220)
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 25, altKey: true })
+    fireEvent.pointerMove(canvas(), { clientX: 87, clientY: 15 })
+    fireEvent.pointerUp(canvas())
+    press('A'); press('F1')
+    fireEvent.pointerDown(preview(), { button: 0, clientX: 4, clientY: 4 })
+    fireEvent.pointerUp(preview())
+    const snapshot = await saveSnapshot()
+    expect(snapshot.size).toBe(3)
+    expect(snapshot.get(`2,${MAX_ROW}`)?.code).toBe(65)
+    expect(snapshot.get(`3,${MAX_ROW}`)?.code).toBe(176)
+    fireEvent.click(screen.getByRole('button', { name: 'Erase' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Draw' }))
+    expect((screen.getByLabelText('Draw mode') as HTMLSelectElement).value).toBe('half')
+  })
   it.each([0, 1000000000])('recolors only existing cells along a drag at row %s, preserving glyphs and grouping undo', async row => {
     const source = new Map([
       [`0,${row}`, { code: 223, fg: 4, bg: 2 }],
