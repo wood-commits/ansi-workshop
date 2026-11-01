@@ -78,7 +78,7 @@ environment. Pull requests run checks but cannot deploy. See the
 ### Source licensing
 
 The editor code is distributed under the [MIT license](./LICENSE).
-**Help > About ANSI Workshop** displays version **0.1**, the project and hosted
+**Help > About ANSI Workshop** displays version **0.2**, the project and hosted
 editor links, the complete MIT license, and the font license and attribution.
 The About version follows the major/minor version in `package.json`.
 The bundled source font and derived bitmap remain under their separate
@@ -88,9 +88,13 @@ Bundled ANSI example artwork and reference images are included with the project
 owner's redistribution permission; the editor's MIT license does not relicense
 those third-party assets.
 
-### Release 0.1
+### Release 0.2
 
-Download the initial [GitHub release](https://github.com/wood-commits/ansi-workshop/releases/tag/v0.1)
+Version 0.2 adds TundraDraw RGB editing, SAUCE metadata viewing/editing,
+half-block drawing, ASCII copy export, experimental Ansimation transitions,
+and scrolling from the VGA preview.
+
+Download the [GitHub release](https://github.com/wood-commits/ansi-workshop/releases/tag/v0.2)
 for the source archives or the static-build ZIP and its SHA-256 checksum.
 The ZIP contains the contents of `dist` at its root, plus the editor license
 and font notices. Upload the entire extracted directory to an HTTPS static

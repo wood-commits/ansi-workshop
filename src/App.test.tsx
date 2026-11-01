@@ -1995,7 +1995,7 @@ describe('editor UI', () => {
       expect(screen.queryByText('untitled.ans *')).toBeNull()
     }
   })
-  it('shows version 0.1, project links, and complete editor and font licenses in About without editing art', () => {
+  it('shows version 0.2, project links, and complete editor and font licenses in About without editing art', () => {
     renderClassicEditor()
     const help = screen.getByText('Help', { selector: 'summary' })
     const settings = screen.getByText('Settings', { selector: 'summary' })
@@ -2004,7 +2004,7 @@ describe('editor UI', () => {
       fireEvent.click(screen.getByRole('button', { name: 'About ANSI Workshop' }))
       const dialog = screen.getByRole('dialog', { name: 'About ANSI Workshop' })
       expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
-      expect(within(dialog).getByText('Version 0.1')).not.toBeNull()
+      expect(within(dialog).getByText('Version 0.2')).not.toBeNull()
       const project = within(dialog).getByRole('link', { name: 'GitHub project' })
       expect(project.getAttribute('href')).toBe('https://github.com/wood-commits/ansi-workshop')
       expect(project.getAttribute('target')).toBe('_blank')
@@ -2027,7 +2027,7 @@ describe('editor UI', () => {
     fireEvent.click(settings)
     fireEvent.click(screen.getByRole('button', { name: 'IBM font license and notices' }))
     const dialog = screen.getByRole('dialog', { name: 'IBM font license and notices' })
-    expect(within(dialog).queryByText('Version 0.1')).toBeNull()
+    expect(within(dialog).queryByText('Version 0.2')).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(document.activeElement).toBe(settings)
   })
