@@ -150,6 +150,10 @@ without another click. Hovering with all menus closed does not open one.
   so it is not clipped. 2x reserves enough height for a terminal-style 80-column,
   25-row view; shorter windows scroll the page to reach the controls below.
   The parent layout accommodates all 80 columns at 2x on wide browser windows.
+  This includes 9px character width. Use **Hide sidebar** in the toolbar or
+  **Window > Hide sidebar** to free canvas space in narrower windows; **Show
+  sidebar** restores colors, preview, help and agent controls without resetting
+  them. Sidebar visibility is session-only.
   Smaller windows scroll horizontally without shrinking the art; the column
   ruler stays aligned. The selected font also applies to the VGA preview,
   function-key palette, all-characters drawer, and brush sample.

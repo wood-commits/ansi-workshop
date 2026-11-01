@@ -103,6 +103,7 @@ export function App() {
   const [selectionEnd, setSelectionEnd] = useState<Point>()
   const [clipboard, setClipboard] = useState<Block>()
   const [showPreview, setShowPreview] = useState(true)
+  const [showSidebar, setShowSidebar] = useState(true)
   const [ansimation, setAnsimation] = useState<{ source: AnimationFrame; top: number }>()
   const [showSauce, setShowSauce] = useState(false)
   const [settings, setSettings] = useState(initialSettings.settings)
@@ -704,6 +705,7 @@ export function App() {
         <button onClick={clearSelection} disabled={!selection}>Deselect <kbd>Esc</kbd></button>
       </div></details>
       <details open={openMenu === 'Window'}><summary ref={windowHeading} onMouseEnter={() => hoverMenu('Window')} onClick={event => toggleMenu(event, 'Window')}>Window</summary><div className="menu-popup" onClick={closeMenu}>
+        <button aria-expanded={showSidebar} aria-controls="editor-sidebar" onClick={() => setShowSidebar(value => !value)}>{showSidebar ? 'Hide' : 'Show'} sidebar</button>
         <button onClick={() => setShowPreview(value => !value)}>{showPreview ? 'Hide' : 'Show'} VGA Preview</button>
         <button disabled={saving || opening || !classic} title={!classic ? 'Ansimation supports 80-column classic ANSI documents only.' : undefined} onClick={() => {
           try { setAnsimation({ source: captureFrame(editor.cells, top), top }) }
@@ -836,6 +838,7 @@ export function App() {
       </form>
       {opening && <button onClick={() => abortOpen.current?.abort()}>Cancel open</button>}
       {saving && <button onClick={() => abortSave.current?.abort()}>Cancel save</button>}
+      <button aria-expanded={showSidebar} aria-controls="editor-sidebar" onClick={() => setShowSidebar(value => !value)}>{showSidebar ? 'Hide' : 'Show'} sidebar</button>
       <div className="tool-options" role="group" aria-label="Tool options">
         {tool === 'draw' && <div className="primitive-controls">
           <label>Mode <select aria-label="Draw mode" value={drawMode} onChange={event => {
@@ -924,7 +927,7 @@ export function App() {
         {tool === 'eyedropper' && <span className="muted">Click a cell to pick its FG and BG · Brush glyph unchanged</span>}
       </div>
     </div>
-    <main className="workspace">
+    <main className={`workspace${showSidebar ? '' : ' sidebar-collapsed'}`}>
       <section className="editor-panel" aria-label="Screen editor">
         <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>{editor.width} × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : ice ? 'ANSI (iCE Colors)' : 'ANSI'}</span></span></div>
         <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth}
@@ -958,7 +961,7 @@ export function App() {
               : <ShadeGlyph code={index + 32} color={code === index + 32 ? '#c4ee86' : '#cbd4e2'} width={8} height={16} font={font} nativeWidth={nativeWidth} />}</button>)}</div>
         </details>
       </section>
-      <aside className="sidebar">
+      <aside className="sidebar" id="editor-sidebar" hidden={!showSidebar}>
         {classic && <AgentPanel key={`agents-${agentDocument}`} onCommand={(documentId, command) => {
           if (lastPoint.current || primitiveDrag.current || gradientDrag.current || moveDrag.current || pathDraft.current) return { ok: false, error: 'A pointer stroke is in progress. Try again after the user finishes drawing.' }
           const result = executeAgentCommand(editor, documentId, revisionCounter.current, command)

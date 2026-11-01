@@ -176,9 +176,14 @@ Both have a one-pixel right border marking the final column. The canvas uses con
 sizing to preserve every art pixel; the ruler includes that extra pixel in its
 width. Pointer mapping excludes the actual border widths, including asymmetric
 borders.
-The app shell allows up to 1720 pixels, enough for the 1322-pixel 2x canvas,
-editor borders, wide-screen sidebar, gap, and workspace padding. Narrower
-windows retain horizontal scrolling inside the canvas host.
+The app shell allows up to 1880 pixels, enough for the 1483-pixel bordered
+80-column 2x/9px canvas, row scrollbar, editor borders, wide-screen sidebar,
+gap, and workspace padding. A toolbar and Window menu toggle collapse the
+sidebar into a single-column workspace. Hidden panels remain mounted so
+preview state, RGB swatches and agent connections survive toggling; hidden
+controls are excluded from keyboard navigation. Sidebar visibility is
+session-only and initially expanded. Narrower windows retain horizontal
+scrolling inside the canvas host without rescaling art.
 The error banner and status footer share one bottom-sticky container, keeping
 errors immediately above the footer without requiring page scrolling. The
 container stays in document flow and follows wrapped banner/footer heights.

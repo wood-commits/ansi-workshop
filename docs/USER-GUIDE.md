@@ -516,6 +516,11 @@ Browser zoom and display scaling can still change the on-screen appearance.
 
 At 2x, smaller windows may need horizontal scrolling and page scrolling to
 reach lower controls. The canvas does not shrink characters to fit.
+Wide windows fit all 80 columns even at 2x with 9px character width.
+Use **Hide sidebar** in the toolbar or **Window > Hide sidebar** to give the
+canvas more room. **Show sidebar** restores the color, preview, help and agent
+panels with their state intact. This toggle is session-only, does not edit art,
+and does not disconnect agent access; use the agent panel to disconnect.
 The five **Settings** menu options (font, cell size, character width, New/Open
 columns and ANSI mode) survive reload in this browser's local storage, separately
 for each site origin (including dev/preview ports). New/Open defaults never

@@ -22,7 +22,7 @@ input, select, textarea { color: #d3dae6; background: #10161f; border: 1px solid
 kbd { font-family: Consolas, monospace; font-size: 11px; color: #95a2b6; }
 h1, h2, p { margin: 0; }
 h2 { font-size: 12px; font-weight: 600; letter-spacing: .3px; }
-.app-shell { max-width: 1720px; margin: auto; }
+.app-shell { max-width: 1880px; margin: auto; }
 .app-header { display: flex; align-items: center; gap: 14px; padding: 23px 30px; border-bottom: 1px solid var(--border); }
 .brand-mark { width: 43px; height: 43px; border: 1px solid #617744; border-radius: 9px; color: var(--accent); font: 40px/35px monospace; text-align: center; background: #1b2519; }
 h1 { color: #f0f3f7; font-size: 19px; letter-spacing: 3px; font-weight: 800; }
@@ -179,6 +179,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .agent-panel small { display: block; font-size: 9px; color: var(--muted); margin-top: 4px; }
 .agent-panel .agent-error { color: #ffb8ae; }
 @media (min-width: 1350px) { .workspace { grid-template-columns: minmax(0, 1fr) 280px; } .canvas-host canvas { margin: 0 auto; } .column-ruler { margin: auto; } }
+.workspace.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+.sidebar[hidden] { display: none; }
 @media (max-width: 1000px) {
   .workspace { grid-template-columns: minmax(0, 1fr) 230px; gap: 13px; padding: 0 15px 20px; }
   .toolbar { padding: 13px 15px; gap: 10px; }

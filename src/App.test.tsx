@@ -963,6 +963,40 @@ describe('display defaults', () => {
 })
 
 describe('editor UI', () => {
+  it('collapses the sidebar without remounting panels or changing art, and restores it from Window', async () => {
+    const first = render(<App />)
+    const art = canvas()
+    const thumbnail = preview()
+    const ownerKey = screen.getByLabelText(/^Owner key/)
+    fireEvent.change(ownerKey, { target: { value: 'session-owner-draft' } })
+    press('F4')
+    const toolbar = within(document.querySelector('.toolbar')!)
+    const toggle = toolbar.getByRole('button', { name: 'Hide sidebar' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toolbar.getByRole('button', { name: 'Show sidebar' }).getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById('editor-sidebar')).toHaveProperty('hidden', true)
+    expect(document.querySelector('.workspace')?.classList.contains('sidebar-collapsed')).toBe(true)
+    expect(canvas()).toBe(art)
+    expect(thumbnail.isConnected).toBe(true)
+    expect(ownerKey.isConnected).toBe(true)
+    press('ArrowRight'); press('A')
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    fireEvent.click(within(screen.getByText('Window', { selector: 'summary' }).parentElement!).getByRole('button', { name: 'Show sidebar' }))
+    expect(document.getElementById('editor-sidebar')).toHaveProperty('hidden', false)
+    expect(preview()).toBe(thumbnail)
+    expect(screen.getByLabelText(/^Owner key/)).toBe(ownerKey)
+    expect(ownerKey).toHaveProperty('value', 'session-owner-draft')
+    expect(await saveSnapshot()).toEqual(new Map([
+      ['0,0', { code: 219, fg: 7, bg: 0 }],
+      ['2,0', { code: 65, fg: 7, bg: 0 }],
+    ]))
+    fireEvent.click(toolbar.getByRole('button', { name: 'Hide sidebar' }))
+    first.unmount()
+    render(<App />)
+    expect(document.getElementById('editor-sidebar')).toHaveProperty('hidden', false)
+  })
+
   it('configures cell size and font without editing art or resetting navigation/history', async () => {
     renderClassicEditor()
     press('F4')
