@@ -1,4 +1,5 @@
 import { EMPTY, MAX_ROW, WIDTH, key, type Cell } from './model'
+import { readSauce, type SauceMetadata } from './sauce'
 
 const ansiOrder = [0, 4, 2, 6, 1, 5, 3, 7]
 
@@ -152,30 +153,11 @@ export class AnsiDecoder {
   }
 }
 
-async function ansiContent(file: Blob): Promise<Blob> {
-  if (file.size < 128) return file
-  const record = new Uint8Array(await file.slice(file.size - 128).arrayBuffer())
-  if (String.fromCharCode(...record.subarray(0, 5)) !== 'SAUCE') return file
-  if (record[5] !== 48 || record[6] !== 48) throw new Error('Unsupported SAUCE version; only SAUCE00 is supported.')
-  if (record[94] !== 1 || (record[95] !== 0 && record[95] !== 1)) {
-    throw new Error('Unsupported SAUCE file type; only static ASCII and ANSI art are supported.')
-  }
-  const width = new DataView(record.buffer).getUint16(96, true)
-  if (width !== 0 && width !== WIDTH) throw new Error('Only 80-column SAUCE art is supported.')
-  if (record[105] & 1) throw new Error('SAUCE iCE colors are not supported; backgrounds must remain in the classic eight-color range.')
-  let end = file.size - 128
-  const comments = record[104]
-  if (comments) {
-    end -= 5 + comments * 64
-    if (end < 0) throw new Error('Truncated SAUCE comment block.')
-    const signature = new Uint8Array(await file.slice(end, end + 5).arrayBuffer())
-    if (String.fromCharCode(...signature) !== 'COMNT') throw new Error('Invalid SAUCE comment block signature.')
-  }
-  // FileSize and row-count metadata are advisory, not trusted allocation/boundary inputs.
-  return file.slice(0, end)
+export async function readAnsi(file: Blob, signal: AbortSignal): Promise<ReadonlyMap<string, Cell>> {
+  return (await readAnsiDocument(file, signal)).cells
 }
 
-export async function readAnsi(file: Blob, signal: AbortSignal): Promise<ReadonlyMap<string, Cell>> {
+export async function readAnsiDocument(file: Blob, signal: AbortSignal): Promise<{ cells: ReadonlyMap<string, Cell>; sauce?: SauceMetadata }> {
   signal.throwIfAborted()
   const decoder = new AnsiDecoder()
   let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
@@ -185,14 +167,14 @@ export async function readAnsi(file: Blob, signal: AbortSignal): Promise<Readonl
     signal.addEventListener('abort', abortRead, { once: true })
   })
   try {
-    const content = await Promise.race([ansiContent(file), aborted])
+    const { content, sauce } = await Promise.race([readSauce(file), aborted])
     signal.throwIfAborted()
     reader = content.stream().getReader()
     while (true) {
       signal.throwIfAborted()
       const { done, value } = await Promise.race([reader.read(), aborted])
       signal.throwIfAborted()
-      if (done) return decoder.finish()
+      if (done) return { cells: decoder.finish(), sauce }
       decoder.write(value)
       await new Promise(resolve => setTimeout(resolve, 0))
     }

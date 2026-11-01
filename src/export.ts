@@ -1,4 +1,5 @@
 import { EMPTY, pointFromKey, type Cell } from './model'
+import { withSauce, type SauceMetadata } from './sauce'
 
 const escape = 27
 const ansiOrder = [0, 4, 2, 6, 1, 5, 3, 7]
@@ -10,8 +11,12 @@ export function sgr(cell: Cell, classicBright = false): number[] {
 }
 
 // Yield bounded byte chunks, including for very distant sparse rows.
-export function* ansiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Array<ArrayBuffer>> {
-  yield* artChunks(cells, true)
+export function* ansiChunks(cells: ReadonlyMap<string, Cell>, sauce?: SauceMetadata): Generator<Uint8Array<ArrayBuffer>> {
+  if (sauce) {
+    let height = 1
+    for (const id of cells.keys()) height = Math.max(height, pointFromKey(id).y + 1)
+    yield* withSauce(artChunks(cells, true), sauce, height)
+  } else yield* artChunks(cells, true)
 }
 
 export function* asciiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8Array<ArrayBuffer>> {

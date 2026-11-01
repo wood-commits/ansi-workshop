@@ -11,7 +11,8 @@ import { connectedShape, moveShape } from './move'
 import { rasterizeHalfBlockStroke, type HalfPoint } from './draw'
 import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle } from './save'
 import { chooseAnsiFile } from './open'
-import { readAnsi } from './import'
+import { readAnsiDocument } from './import'
+import { SauceDialog } from './SauceDialog'
 import { AgentPanel } from './AgentPanel'
 import { AnsimationPanel } from './AnsimationPanel'
 import { captureFrame, type AnimationFrame } from './ansimation'
@@ -89,6 +90,7 @@ export function App() {
   const [clipboard, setClipboard] = useState<Block>()
   const [showPreview, setShowPreview] = useState(true)
   const [ansimation, setAnsimation] = useState<{ source: AnimationFrame; top: number }>()
+  const [showSauce, setShowSauce] = useState(false)
   const [cellSize, setCellSize] = useState<typeof CANVAS_SIZES[number]>(CANVAS_SIZES[0])
   const [font, setFont] = useState<CanvasFont>('ibm-vga')
   const [name, setName] = useState('untitled.ans')
@@ -104,6 +106,7 @@ export function App() {
   const settingsHeading = useRef<HTMLElement>(null)
   const helpHeading = useRef<HTMLElement>(null)
   const windowHeading = useRef<HTMLElement>(null)
+  const fileHeading = useRef<HTMLElement>(null)
   const fileHandle = useRef<AnsiFileHandle | undefined>(undefined)
   const abortSave = useRef<AbortController | undefined>(undefined)
   const abortOpen = useRef<AbortController | undefined>(undefined)
@@ -252,14 +255,14 @@ export function App() {
       const { file, handle } = await chooseAnsiFile()
       controller.signal.throwIfAborted()
       setMessage(`Opening ${file.name}…`)
-      const cells = await readAnsi(file, controller.signal)
+      const { cells, sauce } = await readAnsiDocument(file, controller.signal)
       controller.signal.throwIfAborted()
       if (revisionCounter.current !== startingRevision && editor.dirty &&
           !window.confirm('The current document changed while opening. Discard these latest changes and open the file?')) {
         setMessage('Open canceled. The current document is unchanged.')
         return
       }
-      replaceDocument(new Editor(cells), file.name, handle)
+      replaceDocument(new Editor(cells, sauce), file.name, handle)
       setTool('draw')
       setMessage(`Opened ${file.name}.${handle ? ' Save writes to this browser-authorized file.' : ' Use Save As to choose where to write; this file selection grants read access only.'}`)
     } catch (cause) {
@@ -276,12 +279,13 @@ export function App() {
     abortSave.current = controller
     const version = editor.version
     const snapshot = new Map(editor.cells)
+    const sauce = editor.sauce
     const outputName = asciiCopy ? `${name.replace(/\.[^.]*$/, '')}.asc` : name
     try {
       const handle = asciiCopy ? await chooseFile(outputName, 'ascii')
         : saveAs || !fileHandle.current ? await chooseFile(name) : fileHandle.current
-      const write = asciiCopy ? writeAscii : writeAnsi
-      await write(snapshot, handle, outputName, controller.signal)
+      if (asciiCopy) await writeAscii(snapshot, handle, outputName, controller.signal)
+      else await writeAnsi(snapshot, handle, outputName, controller.signal, sauce)
       if (!asciiCopy) fileHandle.current = handle
       if (handle) {
         if (asciiCopy) setMessage(`Saved ASCII copy ${handle.name} without colors. The ANSI document and save destination are unchanged.`)
@@ -512,12 +516,13 @@ export function App() {
         setOpenMenu(undefined)
       }
     }}>
-      <details open={openMenu === 'File'}><summary onMouseEnter={() => hoverMenu('File')} onClick={event => toggleMenu(event, 'File')}>File</summary><div className="menu-popup" onClick={closeMenu}>
+      <details open={openMenu === 'File'}><summary ref={fileHeading} onMouseEnter={() => hoverMenu('File')} onClick={event => toggleMenu(event, 'File')}>File</summary><div className="menu-popup" onClick={closeMenu}>
         <button onClick={newFile} disabled={saving || opening}>New <kbd>Ctrl N</kbd></button>
         <button onClick={() => void openFile()} disabled={saving || opening}>Open… <kbd>Ctrl O</kbd></button>
         <button onClick={() => void save(false)} disabled={saving || opening}>Save <kbd>Ctrl S</kbd></button>
         <button onClick={() => void save(true)} disabled={saving || opening}>Save As… <kbd>Ctrl Shift S</kbd></button>
         <button onClick={() => void save(true, true)} disabled={saving || opening} title="Save a CP437 copy without ANSI codes or colors; keep the ANSI save destination.">Save As ASCII…</button>
+        <button onClick={() => { editor.commit(); refresh(); setShowSauce(true) }} disabled={saving || opening}>SAUCE…</button>
       </div></details>
       <details open={openMenu === 'Edit'}><summary onMouseEnter={() => hoverMenu('Edit')} onClick={event => toggleMenu(event, 'Edit')}>Edit</summary><div className="menu-popup wide-menu" onClick={closeMenu}>
         <button onClick={undo} disabled={!editor.canUndo}>Undo <kbd>Ctrl Z</kbd></button>
@@ -598,6 +603,15 @@ export function App() {
         <pre aria-label="Full CC BY-SA 4.0 license">{fontLicense}</pre>
       </div>
     </dialog>
+    {showSauce && <SauceDialog sauce={editor.sauce} rows={editor.lastRow + 1}
+      onApply={sauce => {
+        const version = editor.version
+        editor.setSauce(sauce); refresh()
+        setMessage(editor.version === version ? 'SAUCE unchanged.' : sauce
+          ? 'SAUCE metadata updated. Save the ANSI document to write it.'
+          : 'SAUCE metadata removed. Save the ANSI document to write the change.')
+      }}
+      onClose={() => { setShowSauce(false); fileHeading.current?.focus() }} />}
     <div className="toolbar">
       <div className="tool-group" aria-label="Drawing tools">
         <button aria-pressed={tool === 'draw'} onClick={() => setTool('draw')}><ToolIcon tool="draw" />Draw</button>

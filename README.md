@@ -316,10 +316,19 @@ cause a visible error instead of silently losing features.
 Trailing DOS end-of-file bytes (including repeated EOF padding) are accepted;
 other data after EOF is rejected. SAUCE00 trailers and their optional
 comments are accepted for static ASCII/ANSI art with 80-column or unspecified
-width. Metadata (title, author, comments, font/aspect hints) is not rendered or
-preserved when saving. Malformed trailers, other SAUCE file types, non-80-column
+width. **File > SAUCE…** views, adds, edits, or removes the title, author, group,
+date, and comments. Apply is one undoable edit; Cancel leaves metadata unchanged.
+ANSI saves preserve metadata and font/display hints without applying them to
+the canvas. ASCII and animation copies omit SAUCE. Malformed trailers, other SAUCE file types, non-80-column
 art, and iCE-color files are rejected. SAUCE row counts do not allocate rows or
 limit the sparse document.
+
+SAUCE text uses CP437, with limits of 35 bytes for title, 20 each for author/group,
+and 255 comment lines of 64 bytes each. Dates are YYYYMMDD or blank.
+Invalid edits fail visibly rather than being truncated. File size and dimensions
+are recomputed on save; heights beyond 65,535 rows use an unspecified height.
+SAUCE's 32-bit file-size field limits metadata-bearing output to 4 GiB minus
+one byte of ANSI content; remove SAUCE to stream larger files.
 
 When opened through the native picker, **Save** targets that browser-authorized
 file; the browser may still require write permission. File-input fallback
@@ -517,7 +526,7 @@ All sources/settings stay in page memory; save your art separately before closin
 
 ## Deliberate first-version scope
 
-No timeline/frame-by-frame animation editing, SAUCE metadata editing/export,
+No timeline/frame-by-frame animation editing,
 variable width, remote service,
 accounts, plugins, or autosave. Node runs tooling, the local static/dev server,
 and optionally the agent broker, never a filesystem-access API. Unless agent

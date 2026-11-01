@@ -37,6 +37,8 @@ Reloading loses all in-memory state.
 | `src/ansimation.ts` | Bounded 80x25 snapshots, deterministic CP437 transitions, delta ANSI stream and byte-rate playback |
 | `src/AnsimationPanel.tsx` | Experimental modal controls, read-only second art, VGA rendering and separate animation-copy export |
 | `src/import.ts` | Streaming CP437/ANSI decoder, bounded control parsing, sparse cursor coordinates, cancellation |
+| `src/sauce.ts` | Bounded SAUCE00 metadata decoding, CP437 field validation, streamed trailer encoding |
+| `src/SauceDialog.tsx` | Modal metadata draft, explicit Apply/Cancel/removal, read-only format hints |
 | `src/open.ts` | Browser-authorized native open picker and read-only file-input fallback |
 | `src/save.ts` | Native picker capability, streamed writable lifecycle, cancellation, bounded download fallback |
 | `src/Canvas.tsx` | Virtual viewport, pointer capture, wheel navigation, font dispatch, live preview |
@@ -85,6 +87,18 @@ uses the captured state ID, not stack depth, so branching and editing during
 async saving do not accidentally clear the modified flag. Undo history is
 memory-resident and currently unbounded; sparse storage does not make an
 arbitrarily large number of edits free.
+
+SAUCE metadata is an optional, immutable Editor value. Metadata edits commit
+pending drawing first and use the same transaction IDs/undo/redo stacks as
+cells. Imported metadata starts in the clean baseline. Save captures metadata
+alongside cells and version before awaiting the picker; later edits stay dirty.
+The File > SAUCE dialog holds a separate draft until Apply, restores File
+heading focus on close, and does not dispatch canvas/history shortcuts from inputs.
+ANSI output appends DOS EOF, optional COMNT lines, and a SAUCE00 record only when
+metadata exists. File size/width/height are regenerated from output, preserving
+font/flags/additional type hints. Heights above 65,535 use zero (unspecified);
+32-bit file-size overflow fails explicitly and native writing aborts.
+ASCII/animation copy exports stay metadata-free.
 
 Copy and clear iterate stored cells, not every selected coordinate. A Block
 stores its dimensions and sparse relative cells. Paste clears the destination
@@ -503,14 +517,18 @@ order. Unsupported controls/attributes, incomplete sequences, blink/bright
 backgrounds, and unrecognized trailing data fail explicitly with a byte offset.
 Repeated DOS EOF bytes are allowed only as trailing padding, including before
 SAUCE; no other content is accepted after the first EOF.
-Before streaming, `readAnsi` inspects only the final 128-byte SAUCE00 record and,
-if comments are declared, their five-byte `COMNT` signature. Valid static
-ASCII/ANSI trailers are sliced off without loading the comment block or treating
+Before streaming, `readAnsiDocument` inspects the final 128-byte SAUCE00 record and,
+if comments are declared, a bounded `COMNT` block (at most 16,325 bytes). Valid static
+ASCII/ANSI trailers are decoded separately without treating
 metadata as terminal commands. Width must be 80 or unspecified; iCE colors and
 other file types are rejected. FileSize and height are advisory and never used
-for document allocation. Metadata is not retained/exported. Trailer inspection
+for document allocation. Metadata is retained in the Editor and exported on ANSI
+save. Control bytes in metadata display as CP437 graphical symbols rather than
+terminal commands. Imported legacy dates remain viewable; edits and exports
+validate real YYYYMMDD dates or blank. Trailer inspection
 is cancelable; malformed trailers leave the existing document unchanged.
-`readAnsi` yields between file chunks, checks cancellation, and releases its
+`readAnsi` remains a cells-only wrapper for animation loading.
+The document reader yields between file chunks, checks cancellation, and releases its
 reader on success/error. There is no configured input file/row cap, but stored
 cells consume memory.
 

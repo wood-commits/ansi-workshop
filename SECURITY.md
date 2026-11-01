@@ -31,9 +31,15 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
   unsupported controls, attributes, and malformed/unsupported metadata fail visibly before document
   replacement. Escape strings cannot execute scripts, navigate, or fetch URLs.
   SAUCE00 static ASCII/ANSI metadata is validated separately and excluded from
-  terminal decoding. Only its 128-byte record and optional five-byte comment
-  signature are read ahead; comment counts are byte-bounded, and declared file
-  size/height never drive allocations. Metadata is not retained on export.
+  terminal decoding. Only its 128-byte record and optional comment block (at
+  most 16,325 bytes including signature) are read ahead; comment counts are
+  byte-bounded, and declared file size/height never drive allocations.
+  Metadata stays in page memory and is preserved on ANSI export, not ASCII or
+  animation copies. The SAUCE dialog renders text through React, validates
+  CP437 byte lengths/dates, and applies edits through document history.
+  Metadata control bytes display as graphical symbols, never terminal commands.
+  SAUCE file-size overflow fails explicitly; height overflow is unspecified
+  without restricting the sparse document.
   LF-only art and explicit DEC autowrap (`?7h`/`?7l`) are supported; other
   private modes still fail. Repeated DOS EOF bytes are accepted as trailing
   padding, but any non-EOF content after EOF still fails.

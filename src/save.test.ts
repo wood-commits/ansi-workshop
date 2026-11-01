@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle } from './save'
+import { emptySauce } from './sauce'
 
 function file() {
   const stream = { write: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) }
@@ -48,6 +49,22 @@ describe('native save capability', () => {
   })
 })
 describe('streaming save', () => {
+  it('streams the complete SAUCE trailer and aborts if its final write fails', async () => {
+    const { handle, stream } = file()
+    const sauce = { ...emptySauce(), title: 'Art', comments: ['One'] }
+    await writeAnsi(new Map(), handle, 'screen.ans', new AbortController().signal, sauce)
+    const bytes = stream.write.mock.calls.flatMap(([chunk]) => [...chunk])
+    expect(bytes.length).toBe(15 + 1 + 69 + 128)
+    expect(bytes.slice(-128, -121)).toEqual([83, 65, 85, 67, 69, 48, 48])
+    expect(stream.close).toHaveBeenCalledOnce()
+    stream.write.mockImplementation(async (chunk: Uint8Array) => {
+      if (chunk.length === 128) throw new Error('Trailer write failed')
+    })
+    stream.close.mockClear()
+    await expect(writeAnsi(new Map(), handle, 'screen.ans', new AbortController().signal, sauce)).rejects.toThrow('Trailer write failed')
+    expect(stream.abort).toHaveBeenCalledOnce()
+    expect(stream.close).not.toHaveBeenCalled()
+  })
   it('streams ASCII bytes through the same native writable lifecycle', async () => {
     const { handle, stream } = file()
     await writeAscii(new Map([['1,0', { code: 219, fg: 14, bg: 1 }]]), handle, 'screen.asc', new AbortController().signal)
