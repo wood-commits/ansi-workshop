@@ -54,6 +54,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    setupFiles: ['src/testSetup.ts'],
     include: ['src/**/*.test.{ts,tsx}', 'mcp/**/*.test.ts'],
     restoreMocks: true,
     testTimeout: process.env.CI ? 15_000 : 5_000,

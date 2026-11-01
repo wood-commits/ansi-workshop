@@ -15,12 +15,21 @@ schemas when running in a browser. This skips the eval capability probe under
 the existing CSP. Node broker/MCP processes retain their prior Zod configuration;
 the validation schemas and limits are identical in both environments.
 
-The only persistent write capability is a handle returned by a user-initiated
+The only persistent artwork write capability is a handle returned by a user-initiated
 browser file picker, subject to browser write permission. The download fallback uses an in-memory Blob and a
 temporary object URL. New documents forget the previous handle but preserve
 the brush/clipboard preferences. Opening replaces the handle with the selected
 file's native handle, or clears it for read-only file-input fallback.
-Reloading loses all in-memory state.
+Reloading loses all in-memory state except the five Settings menu preferences:
+canvas font, cell size, character width, New/Open columns and ANSI mode.
+These are stored under `ansi-workshop.settings` in origin-scoped localStorage,
+with a versioned, bounded, strictly validated whitelist. Missing storage uses
+defaults; malformed/unsupported storage and read/write failures are logged and
+shown visibly without blocking editing. Initial loading does not rewrite storage.
+Only preference changes write; invalid column drafts preserve the last valid
+column preference. Reload still creates a default 80-column classic document;
+saved New/Open options apply only on those commands. No art, handles, tokens,
+clipboard, swatches, tools or preview visibility are stored.
 
 ## Modules
 
@@ -51,6 +60,7 @@ Reloading loses all in-memory state.
 | `src/assets/fonts/LICENSE.txt`, `src/assets/fonts/NOTICE.txt` | Full font license and attribution, imported as raw text for Settings and About |
 | `scripts/generate-font.ts` | Offline verified WOFF-to-bitmap conversion using only Node built-ins |
 | `src/App.tsx` | React session state, commands, menus, keyboard dispatch, save status, unsaved-change protection |
+| `src/settings.ts` | Versioned Settings-only localStorage whitelist, validation and explicit storage errors |
 | `src/agentProtocol.ts` | Shared strict Zod command/result schemas and operation limits |
 | `src/agentCommands.ts` | Complete-batch validation, document/revision checks, undoable edits and bounded reads |
 | `src/AgentPanel.tsx` | Owner pairing, grant/revoke controls, heartbeat/polling and acknowledgment |

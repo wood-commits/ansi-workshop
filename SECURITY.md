@@ -82,6 +82,14 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
 - Unsaved art is not persisted. A close/reload warning reduces accidental loss
   but browsers can bypass it. Native picker cancellation and download fallback
   are communicated distinctly from verified native close success.
+- Only the five Settings menu preferences (font, cell size, character width,
+  New/Open columns and ANSI mode) are persisted in origin-scoped localStorage.
+  A versioned whitelist validates stored types and ranges before use and rejects
+  oversized or unsupported records. Read/write failures are logged and shown;
+  editing remains available with defaults or session-only changes. No artwork,
+  metadata, history, clipboard, swatches, file handles or agent credentials are
+  stored. Browser site-data clearing resets preferences; this is not autosave
+  or recovery storage.
 
 Experimental Ansimation uses copied, bounded 80x25 frames and the same validated
 CP437/color ranges. A second art file is read through the existing authorized

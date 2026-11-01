@@ -516,7 +516,15 @@ Browser zoom and display scaling can still change the on-screen appearance.
 
 At 2x, smaller windows may need horizontal scrolling and page scrolling to
 reach lower controls. The canvas does not shrink characters to fit.
-Display settings survive New/Open but reset on reload.
+The five **Settings** menu options (font, cell size, character width, New/Open
+columns and ANSI mode) survive reload in this browser's local storage, separately
+for each site origin (including dev/preview ports). New/Open defaults never
+resize or change the current document. Invalid column drafts retain the last
+valid saved value. Invalid/unavailable storage shows an error and uses defaults;
+failed writes leave preferences usable for this session.
+Clear this site's browser storage to reset preferences.
+Artwork, history, clipboard, swatches, tools, preview visibility, file handles
+and agent credentials remain memory-only.
 
 ## Keyboard reference
 

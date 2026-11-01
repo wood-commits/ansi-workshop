@@ -37,7 +37,8 @@ remain out of scope.
 - Keep loopback binding, host restrictions, disabled cross-origin CORS on
   dev/preview, CSP, and the other response headers. The optional agent broker
   is the sole narrow CORS exception: exact editor origins on its owner route.
-- The app deliberately has no automatic persistence. Never claim a download
+- Only Settings menu preferences persist in localStorage; artwork, other session
+  state, file handles and credentials must remain memory-only. Never claim a download
   has been successfully written to disk.
 - Native save and fallback have different capabilities; preserve explicit
   capability messaging and visible error/cancellation paths.

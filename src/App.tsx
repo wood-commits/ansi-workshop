@@ -5,7 +5,6 @@ import { TundraColors } from './TundraColors'
 import { readTundraDocument } from './tundra'
 import { ArtCanvas, CANVAS_SIZES, ShadeGlyph, VgaPreview, type PointerInput } from './Canvas'
 import type { Tool } from './tools'
-import type { CanvasFont } from './vgaFont'
 import { Editor, EMPTY, key, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
 import { convertPathNode, rasterizePath, removePathNode, type BezierPath, type PathNode } from './path'
@@ -25,6 +24,7 @@ import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
 import editorLicense from '../LICENSE?raw'
 import { version } from '../package.json'
+import { loadSettings, saveSettings, type Settings } from './settings'
 
 const RELEASE_VERSION = version.split('.').slice(0, 2).join('.')
 
@@ -56,6 +56,8 @@ function ToolIcon({ tool }: { tool: Tool }) {
 const clampRow = (row: number) => Math.min(MAX_ROW, Math.max(0, row))
 
 export function App() {
+  const [initialSettings] = useState(loadSettings)
+  const [settingsError, setSettingsError] = useState(initialSettings.error?.message ?? '')
   const [editor, setEditor] = useState(() => new Editor())
   const [revision, setRevision] = useState(0)
   const revisionCounter = useRef(0)
@@ -103,11 +105,24 @@ export function App() {
   const [showPreview, setShowPreview] = useState(true)
   const [ansimation, setAnsimation] = useState<{ source: AnimationFrame; top: number }>()
   const [showSauce, setShowSauce] = useState(false)
-  const [cellSize, setCellSize] = useState<typeof CANVAS_SIZES[number]>(CANVAS_SIZES[0])
-  const [font, setFont] = useState<CanvasFont>('ibm-vga')
-  const [nativeWidth, setNativeWidth] = useState<8 | 9>(8)
-  const [columns, setColumns] = useState(String(WIDTH))
-  const [ansiMode, setAnsiMode] = useState<'ansi' | 'ice'>('ansi')
+  const [settings, setSettings] = useState(initialSettings.settings)
+  const { font, nativeWidth, ansiMode } = settings
+  const cellSize = CANVAS_SIZES.find(size => size.id === settings.cellSize) ?? CANVAS_SIZES[0]
+  const [columns, setColumns] = useState(String(initialSettings.settings.columns))
+  useEffect(() => {
+    if (initialSettings.error) console.error('ANSI Workshop:', initialSettings.error)
+  }, [initialSettings])
+  const updateSettings = (change: Partial<Settings>) => {
+    const next = { ...settings, ...change }
+    setSettings(next)
+    try {
+      saveSettings(next)
+      setSettingsError('')
+    } catch (cause) {
+      console.error('ANSI Workshop:', cause)
+      setSettingsError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
   const displaySize = useMemo(() => ({ ...cellSize, width: Math.round(cellSize.width * nativeWidth / 8) }), [cellSize, nativeWidth])
   const [name, setName] = useState('untitled.ans')
   const [message, setMessage] = useState('Ready. Click the canvas to draw, or use the keyboard.')
@@ -698,10 +713,15 @@ export function App() {
       <details open={openMenu === 'Settings'}><summary ref={settingsHeading} onMouseEnter={() => hoverMenu('Settings')} onClick={event => toggleMenu(event, 'Settings')}>Settings</summary>
         <div className="menu-popup settings-menu">
           <label>New/Open columns<input aria-label="New/Open columns" type="number" min={1} max={MAX_COLUMNS} step={1}
-            value={columns} onChange={event => setColumns(event.target.value)} /></label>
+            value={columns} onChange={event => {
+              const value = event.target.value
+              setColumns(value)
+              const width = Number(value)
+              if (/^[0-9]+$/.test(value) && Number.isInteger(width) && width >= 1 && width <= MAX_COLUMNS) updateSettings({ columns: width })
+            }} /></label>
           <label>New/Open ANSI mode<select aria-label="New/Open ANSI mode" value={ansiMode} onChange={event => {
             const value = event.target.value
-            if (value === 'ansi' || value === 'ice') setAnsiMode(value)
+            if (value === 'ansi' || value === 'ice') updateSettings({ ansiMode: value })
             else report(new Error('Unknown ANSI document mode.'))
           }}>
             <option value="ansi">Classic ANSI (8 backgrounds)</option>
@@ -711,7 +731,7 @@ export function App() {
             Files without SAUCE use these choices. iCE uses SGR 5 for steady bright backgrounds, not animated blink.</p>
           <label>Canvas font<select aria-label="Canvas font" value={font} onChange={event => {
             const value = event.target.value
-            if (value === 'ibm-vga' || value === 'consolas') setFont(value)
+            if (value === 'ibm-vga' || value === 'consolas') updateSettings({ font: value })
             else report(new Error('Unknown canvas font.'))
           }}>
             <option value="ibm-vga">IBM VGA 8×16</option>
@@ -719,12 +739,12 @@ export function App() {
           </select></label>
           <label>Canvas cell size<select aria-label="Canvas cell size" value={cellSize.id} onChange={event => {
             const next = CANVAS_SIZES.find(size => size.id === event.target.value)
-            if (next) setCellSize(next)
+            if (next) updateSettings({ cellSize: next.id })
             else report(new Error('Unknown canvas cell size.'))
           }}>{CANVAS_SIZES.map(size => <option key={size.id} value={size.id}>{size.label}</option>)}</select></label>
           <label>Character width<select aria-label="Character width" value={nativeWidth} onChange={event => {
             const value = Number(event.target.value)
-            if (value === 8 || value === 9) setNativeWidth(value)
+            if (value === 8 || value === 9) updateSettings({ nativeWidth: value })
             else report(new Error('Character width must be 8 or 9 pixels.'))
           }}><option value={8}>8 pixels (default)</option><option value={9}>9 pixels (VGA line graphics)</option></select></label>
           <p>9px keeps IBM glyphs 8px wide and extends the last pixel only for CP437 192-223. Zoom scales the selected width;
@@ -732,7 +752,8 @@ export function App() {
           <p>{font === 'consolas' ? 'Consolas uses your installed font, with Courier New / monospace fallback. Its pixels vary by browser and platform.'
             : cellSize.id === 'classic' ? 'IBM bitmap enlarged 1.25× with nearest-neighbor pixels. Pixel widths and heights are uneven.'
               : 'Exact IBM bitmap pixels at native size or 2× in the canvas backing image.'}</p>
-          <p>Zoom, OS scaling, and the preview thumbnail can rescale screen pixels. Settings last until reload.</p>
+          <p>Zoom, OS scaling, and the preview thumbnail can rescale screen pixels. Settings are saved in this browser's local storage.
+            Artwork and other session state are not stored.</p>
           <p className="font-credit">IBM font by <a href="https://int10h.org/oldschool-pc-fonts/" target="_blank" rel="noreferrer">VileR</a> · CC BY-SA 4.0.
             {' '}Converted to a CP437 bitmap; glyph designs unchanged.</p>
           <button className="font-notices-button" onClick={() => showInfo('font')}>IBM font license and notices</button>
@@ -760,7 +781,8 @@ export function App() {
         {dialogKind === 'about' && <>
           <h3>ANSI Workshop</h3>
           <p>Version {RELEASE_VERSION}</p>
-          <p>A local-first, 80-column CP437 ANSI art editor. Artwork stays in your browser; there is no automatic persistence.</p>
+          <p>A local-first, 80-column CP437 ANSI art editor. Artwork stays in your browser and is not automatically persisted.
+            Only Settings menu preferences are saved in local storage.</p>
           <p><a href="https://github.com/wood-commits/ansi-workshop" target="_blank" rel="noreferrer">GitHub project</a>
             {' '}&middot;{' '}<a href="https://wood-commits.github.io/ansi-workshop/" target="_blank" rel="noreferrer">Hosted static editor</a></p>
           <h3>Editor license (MIT)</h3>
@@ -993,6 +1015,8 @@ export function App() {
       windowHeading.current?.focus()
     }} />}
     <div className="status-area">
+      {settingsError && <div role="alert" className="error-banner"><strong>Settings need attention:</strong> {settingsError}
+        <button onClick={() => setSettingsError('')} aria-label="Dismiss settings error">×</button></div>}
       {(error || pathResult.error) && <div role="alert" className="error-banner"><strong>Something needs attention:</strong> {error || pathResult.error}
         {!pathResult.error && <button onClick={() => setError('')} aria-label="Dismiss error">×</button>}</div>}
       <footer className="status-bar">

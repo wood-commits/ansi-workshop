@@ -8,7 +8,8 @@ reproduction is separately licensed; see Font credits below.
 **[Open the hosted static editor](https://wood-commits.github.io/ansi-workshop/)**
 or browse the [GitHub project](https://github.com/wood-commits/ansi-workshop).
 Editing and file access remain in your browser; the hosted version has no
-uploads or automatic persistence. Agent access requires the local app.
+uploads or automatic artwork persistence. Settings menu preferences are saved
+in your browser's local storage. Agent access requires the local app.
 
 ## User guide
 
@@ -48,7 +49,7 @@ scripts/styles, plus `no-referrer` metadata. These protections work without
 custom response headers; development keeps its separate HMR-compatible policy.
 Use HTTPS and enable GitHub Pages' **Enforce HTTPS** option when deploying.
 Editing and file access still happen only in the browser; hosting does not
-add uploads, accounts, persistence, or a backend.
+add uploads, accounts, artwork persistence, or a backend.
 
 GitHub Pages cannot ordinarily configure project-specific response headers.
 HTML cannot supply the anti-embedding `frame-ancestors` directive, MIME
@@ -152,8 +153,14 @@ without another click. Hovering with all menus closed does not open one.
   Smaller windows scroll horizontally without shrinking the art; the column
   ruler stays aligned. The selected font also applies to the VGA preview,
   function-key palette, all-characters drawer, and brush sample.
-  Settings survive New/Open, but reset on reload; no preferences or art are
-  automatically persisted. Changing display settings does not edit the document.
+  The five Settings menu options (font, cell size, character width, New/Open
+  columns and ANSI mode) survive reload in this browser's local storage.
+  Preferences are separate for each site origin, including dev and preview ports.
+  Invalid or unavailable storage shows an error and uses defaults; failed writes
+  leave settings usable for the session. Invalid column drafts do not replace the
+  last valid preference. Clear this site's browser storage to reset preferences.
+  Artwork, history, clipboard, swatches, tools, preview visibility, file handles
+  and agent credentials are not persisted. Changing settings does not edit the document.
   **Character width** independently selects 8px (default) or VGA-compatible 9px:
   IBM glyphs keep their original eight pixels, with the eighth pixel repeated
   in column nine only for CP437 192-223. Other glyphs have a blank ninth pixel.
