@@ -36,7 +36,7 @@ export class AnsiDecoder {
   }
   private writeCell(code: number, x = this.x): void {
     if (this.y > MAX_ROW) this.fail('ANSI cell exceeds safe row precision')
-    const cell = { code, fg: this.bold && this.fg < 8 ? this.fg + 8 : this.fg, bg: this.bg + (this.brightBackground ? 8 : 0) }
+    const cell = { code, fg: this.bold && this.fg < 8 ? this.fg + 8 : this.fg, bg: this.bg | (this.brightBackground ? 8 : 0) }
     const id = key(x, this.y)
     if (cell.code === EMPTY.code && cell.fg === EMPTY.fg && cell.bg === EMPTY.bg) this.cells.delete(id)
     else this.cells.set(id, cell)
@@ -60,6 +60,7 @@ export class AnsiDecoder {
         else if (value >= 90 && value <= 97) this.fg = ansiOrder[value - 90] + 8
         else if (value === 39) this.fg = 7
         else if (value >= 40 && value <= 47) this.bg = ansiOrder[value - 40]
+        else if (value >= 100 && value <= 107 && this.format === 'ice') this.bg = ansiOrder[value - 100] + 8
         else if (value === 49) this.bg = 0
         else if (value === 5 && this.format === 'ice') this.brightBackground = true
         else if (value === 25 && this.format === 'ice') this.brightBackground = false

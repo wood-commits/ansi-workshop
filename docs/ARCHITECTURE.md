@@ -82,7 +82,9 @@ foreground into the background explicitly reduces it to its base color and
 notifies the user; classic mode exports no bright backgrounds or blink.
 The explicit `ice` format permits indexes 0-15 for both inks (not RGB).
 Its decoder treats SGR 5 as background intensity and SGR 25/reset as clearing
-intensity. Export emits SGR 5/25 plus base 40-47 backgrounds, never animated
+intensity. In iCE mode, SGR 100-107 also selects explicit bright backgrounds;
+SGR 40-47/49 replaces that selection, while SGR 5/25 independently controls
+the intensity bit without adding it twice. Export emits SGR 5/25 plus base 40-47 backgrounds, never animated
 blink or extended 100-107 colors. SAUCE flags select the ANSI format on import;
 metadata-free files use the New/Open mode setting. Agent access and Ansimation
 remain restricted to 80-column `ansi` documents; `readAnsi` retains that restriction

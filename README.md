@@ -279,6 +279,8 @@ without another click. Hovering with all menus closed does not open one.
   Open detects the iCE bit in SAUCE automatically; files without SAUCE use
   the selected mode. iCE interprets SGR 5 as steady background intensity,
   never animated blink, and SGR 25/reset removes that intensity.
+  iCE imports also accept SGR 100-107 as explicit bright background colors;
+  saving normalizes them to SGR 5/25 with base background codes.
   Classic mode still rejects blink and bright backgrounds.
   With the
   canvas focused, Ctrl+Left/Right cycles the foreground backward/forward and
@@ -402,7 +404,8 @@ next row. A bare LF after a full-width row adds a newline after that wrap;
 CRLF cancels pending wrap, keeping the editor's saved files stable on reopening.
 
 This is not a full terminal emulator or UTF-8 importer. Unsupported controls,
-blink (SGR 6, or SGR 5 outside iCE mode), extended bright backgrounds (SGR 100-107),
+blink (SGR 6, or SGR 5 outside iCE mode), extended bright backgrounds outside
+iCE mode (SGR 100-107),
 256-color/truecolor, and other display erase modes
 cause a visible error instead of silently losing features.
 Trailing DOS end-of-file bytes (including repeated EOF padding) are accepted;

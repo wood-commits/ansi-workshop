@@ -25,8 +25,9 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
 - Classic ANSI cells accept CP437 bytes 32-255, foreground colors 0-15, and
   background colors 0-7, never raw control bytes. Optional iCE documents accept
   16 indexed backgrounds and interpret SGR 5 as steady background intensity,
-  not animated blink. Classic mode remains unchanged; SGR 6 and extended bright
-  background sequences remain rejected. Explicit TundraDraw documents accept
+  not animated blink. SGR 100-107 is accepted only in iCE mode and normalized
+  to SGR 5/25 with base backgrounds on export. Classic mode remains unchanged;
+  SGR 6 remains rejected in both modes. Explicit TundraDraw documents accept
   validated 24-bit RGB inks for both colors. Neither mode widens animation or
   agent schemas; those workflows remain 80-column classic ANSI only.
   Document columns are immutable, validated integers from 1 to 512. New/Open

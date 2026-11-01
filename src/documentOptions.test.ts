@@ -64,6 +64,53 @@ describe('document columns, iCE colors and VGA ninth pixel', () => {
     expect(automatic.format).toBe('ansi')
   })
 
+  it('imports all extended bright backgrounds only in iCE mode across byte boundaries', () => {
+    const decoder = new AnsiDecoder(80, 'ice')
+    const backgrounds = [8, 12, 10, 14, 9, 13, 11, 15]
+    for (let index = 0; index < backgrounds.length; index++) {
+      const text = `\x1b[0;30;${100 + index}m\xdb`
+      for (const byte of Uint8Array.from(text, char => char.charCodeAt(0))) decoder.write(new Uint8Array([byte]))
+      expect(decoder.finish().get(`${index},0`)).toEqual({ code: 219, fg: 0, bg: backgrounds[index] })
+      expect(() => new AnsiDecoder().write(Uint8Array.from(text, char => char.charCodeAt(0)))).toThrow(/background/)
+    }
+    const exported = bytesOf(ansiChunks(decoder.finish(), undefined, 'ice'))
+    const text = String.fromCharCode(...exported)
+    for (const sequence of text.split('\x1b[').slice(1)) {
+      expect(sequence.split('m')[0].split(';').some(value => Number(value) >= 100 && Number(value) <= 107)).toBe(false)
+    }
+    const loaded = new AnsiDecoder(80, 'ice')
+    loaded.write(exported.slice(0, -128))
+    expect(loaded.finish()).toEqual(decoder.finish())
+  })
+
+  it('keeps extended background selection separate from iCE SGR 5 intensity', () => {
+    const decoder = new AnsiDecoder(80, 'ice')
+    const text = '\x1b[101mA\x1b[5mB\x1b[25mC\x1b[44mD\x1b[5mE\x1b[102mF\x1b[25mG\x1b[49mH\x1b[107mI\x1b[0mJ'
+    decoder.write(Uint8Array.from(text, char => char.charCodeAt(0)))
+    expect([...decoder.finish().values()].map(cell => cell.bg)).toEqual([12, 12, 12, 1, 9, 10, 10, 0, 15, 0])
+    expect(() => new AnsiDecoder(80, 'ice').write(Uint8Array.from('\x1b[100m\x1b[2J', char => char.charCodeAt(0))))
+      .toThrow(/background/)
+  })
+
+  it('opens extended backgrounds using SAUCE iCE detection or the metadata-free mode setting', async () => {
+    const content = Uint8Array.from('\x1b[0;30;100m\xdb\x1b[0;37;107m\xdb', char => char.charCodeAt(0))
+    const trailer = bytesOf(ansiChunks(new Map(), undefined, 'ice', 114)).slice(-128)
+    const signal = new AbortController().signal
+    const automatic = await readAnsiDocument(new Blob([content, trailer]), signal)
+    expect(automatic.format).toBe('ice')
+    expect(automatic.width).toBe(114)
+    expect(automatic.cells).toEqual(new Map([
+      ['0,0', { code: 219, fg: 0, bg: 8 }],
+      ['1,0', { code: 219, fg: 7, bg: 15 }],
+    ]))
+    const manual = await readAnsiDocument(new Blob([content]), signal, 114, 'ice')
+    expect(manual.cells).toEqual(automatic.cells)
+    expect(manual.format).toBe('ice')
+    await expect(readAnsiDocument(new Blob([content]), signal)).rejects.toThrow(/background/)
+    trailer[105] = 0
+    await expect(readAnsiDocument(new Blob([content, trailer]), signal, 114, 'ice')).rejects.toThrow(/background/)
+  })
+
   it('round-trips wider Tundra positions and wrap without dense storage', async () => {
     const cells = new Map([['131,0', ink], ['0,1', ink], ['131,1000000000', ink]])
     const bytes = bytesOf(tundraChunks(cells, undefined, 132))

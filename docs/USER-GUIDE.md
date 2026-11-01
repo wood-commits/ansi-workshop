@@ -135,7 +135,9 @@ Classic ANSI has **16 foregrounds** and **eight backgrounds**, with no bright
 backgrounds or blink. Before New/Open, choose **Settings > New/Open ANSI mode >
 iCE Colors** for 16 backgrounds. SAUCE's iCE flag automatically selects the mode;
 files without metadata use this setting. iCE treats SGR 5 as steady background
-intensity, not animated blink. Swapping and Ctrl+arrows use all 16 backgrounds
+intensity, not animated blink. iCE imports also accept explicit bright
+background codes (SGR 100-107); saves use SGR 5/25 with base background codes.
+Swapping and Ctrl+arrows use all 16 backgrounds
 in this mode. Use an iCE-compatible viewer; ordinary terminals may blink.
 Colors affect new characters and drawing; picking a
 color alone does not recolor existing art.
