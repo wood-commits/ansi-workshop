@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Editor, MAX_ROW, pointFromKey } from './model'
 import { rgbColor } from './colors'
 import { ansiChunks } from './export'
-import { convertPathNode, rasterizePath, removePathNode, type BezierPath, type PathNode } from './path'
+import { convertPathNode, hitPathSegment, insertPathNode, linkPathHandles, movePathHandle, pathContainsPoint, rasterizePath, removePathNode, translatePath, type BezierPath, type PathNode } from './path'
 
 const node = (x: number, y: number): PathNode => ({
   point: { x, y }, incoming: { x, y }, outgoing: { x, y },
@@ -13,6 +13,49 @@ const box = (left: number, top: number, right: number, bottom: number, origin = 
 const ink = { fg: 14, bg: 0 }
 
 describe('Bezier path rasterization', () => {
+  it('inserts on straight, curved and closing segments without changing their geometry', () => {
+    for (const index of [0, 3]) {
+      const path = convertPathNode(box(5, 5, 15, 15, 1_000_000_000), index, true)
+      const before = structuredClone(path)
+      const inserted = insertPathNode(path, index, 0.5)
+      const hit = hitPathSegment(path, inserted.nodes[index + 1].point, { x: 0.01, y: 0.01 })
+      expect(hit?.index).toBe(index)
+      expect(hit?.t).toBeCloseTo(0.5, 5)
+      expect(rasterizePath(inserted, ink)).toEqual(rasterizePath(path, ink))
+      expect(path).toEqual(before)
+    }
+    const path = box(5, 5, 15, 15)
+    expect(insertPathNode(path, 0, 0.5).nodes[1].point).toEqual({ x: 10, y: 5 })
+    expect(hitPathSegment(path, { x: 10, y: 10 }, { x: 0.5, y: 0.25 })).toBeUndefined()
+    expect(() => insertPathNode({ ...path, closed: false }, 3, 0.5)).toThrow(/segment/)
+    expect(() => insertPathNode(path, 0, 0)).toThrow(/segment/)
+  })
+
+  it('moves the whole path with its handles, clamps anchors at edges and retains distant local precision', () => {
+    const path = convertPathNode(box(5, 0, 15, 10, MAX_ROW - 10), 1, true)
+    const shifted = translatePath(path, { x: -20, y: 100 })
+    expect(shifted.nodes[0].point).toEqual({ x: 0, y: 0 })
+    expect(shifted.nodes[1].incoming.x).toBeCloseTo(path.nodes[1].incoming.x - 5)
+    expect(shifted.origin).toBe(path.origin)
+    expect(pathContainsPoint(path, { x: 10, y: 5 })).toBe(true)
+    expect(pathContainsPoint(path, { x: 30, y: 5 })).toBe(false)
+    expect(pathContainsPoint({ ...path, closed: false }, { x: 10, y: 5 })).toBe(false)
+    expect(() => translatePath(path, { x: NaN, y: 0 })).toThrow(/finite/)
+  })
+
+  it('optionally keeps opposite handles collinear with independent lengths in either direction', () => {
+    const path = box(5, 5, 15, 15)
+    path.nodes[0] = { point: { x: 5, y: 5 }, incoming: { x: 3, y: 5 }, outgoing: { x: 9, y: 5 } }
+    const linked = linkPathHandles(path, 0, true).nodes[0]
+    const moved = movePathHandle(linked, 'outgoing', { x: 5, y: 7 })
+    expect(moved.incoming).toEqual({ x: 5, y: 4 })
+    expect(movePathHandle(moved, 'incoming', { x: 3, y: 5 }).outgoing).toEqual({ x: 9, y: 5 })
+    expect(movePathHandle(path.nodes[0], 'outgoing', { x: 5, y: 7 }).incoming).toEqual({ x: 3, y: 5 })
+    expect(movePathHandle(linked, 'outgoing', linked.point).incoming).toEqual(linked.point)
+    const anchorOnly = linkPathHandles(path, 1, true).nodes[1]
+    expect(movePathHandle(anchorOnly, 'outgoing', { x: 17, y: 5 }).incoming).toEqual({ x: 13, y: 5 })
+  })
+
   it('deletes any node, preserves closure when possible, and reopens undersized paths', () => {
     const path = box(2, 2, 8, 8)
     const result = removePathNode(path, 1)

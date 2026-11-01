@@ -264,16 +264,22 @@ With **Outline**, only the outline is cut away, not the interior.
 3. Add at least three nodes. Click the first node or **Close path** to close
    the outline without placing any art.
 4. Drag square nodes to move them and their handles. Drag circular handles
-   individually to reshape curves, even after closing. **Reopen path** lets
-   you append more nodes.
+   individually to reshape curves, even after closing. Enable **Lock handles**
+   for the selected node to keep both handles on one line, retaining their
+   individual lengths. Drag the outline or a closed path's interior to move
+   the whole draft. Double-click a segment to insert a node there without
+   changing its curve. **Reopen path** lets you append more nodes.
 5. Choose FG/BG while reviewing the closed path's live block preview.
 6. Click **Finish path** or press **Enter** with a canvas focused to apply the
-   whole path as one undo step. Finish also closes an open outline.
+   whole path as one document undo step. Finish also closes an open outline.
+   Undo restores the unfinished, editable draft and removes the cell edits;
+   Redo reapplies the finished path.
 
 **Escape** or **Cancel path** discards the draft without changing art/history.
 Switching tools also discards it. Pointer cancellation/focus loss rolls back
 only the current node/handle drag; the rest of the draft remains editable.
-Typing, F-keys, undo/redo and block edits pause while a draft exists. Tab still
+Typing, F-keys and block edits pause while a draft exists. Undo/redo works for
+node additions, deletion, conversion, handle locking, drags and closure. Tab still
 reaches controls; ordinary keyboard editing resumes after Finish or Cancel.
 New/Open asks before discarding a draft, and reload warns about it.
 
@@ -291,8 +297,10 @@ The selected square is filled green with a white border.
   segments at that node unless the adjacent nodes still have curve handles.
   The anchor itself does not move.
 
-All these changes remain draft-only, including on closed paths. Finish commits
-only the final block result, not separate node-edit undo steps.
+All these changes remain draft-only and individually undoable, including on
+closed paths. Finish commits only the final block result to document history.
+After undoing Finish, further Undo steps walk back the draft edits. Cancel
+discards draft history without disturbing the document's redo stack.
 
 Fill uses the current FG/BG, not the brush glyph. Paths are sampled in VGA's
 1:2 proportions and fitted to full, upper/lower and left/right half blocks.

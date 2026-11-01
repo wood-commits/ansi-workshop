@@ -130,6 +130,7 @@ interface CanvasProps {
   pathNode?: number
   onNavigate(point: Point): void
   onPoint(point: Point, start: boolean, pointer: PointerInput): void
+  onDoublePoint?(point: Point, pointer: PointerInput): void
   onEnd(canceled: boolean): void
   onScroll(delta: number): void
   onKey(event: React.KeyboardEvent<HTMLCanvasElement>): void
@@ -143,8 +144,8 @@ export interface PointerInput {
 }
 
 function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
-  top, rows, columns, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onEnd, onScroll, onKey,
-}: Pick<CanvasProps, 'top' | 'selecting' | 'onPoint' | 'onScroll' | 'onKey'> & {
+  top, rows, columns, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onDoublePoint, onEnd, onScroll, onKey,
+}: Pick<CanvasProps, 'top' | 'selecting' | 'onPoint' | 'onDoublePoint' | 'onScroll' | 'onKey'> & {
   primitive?: boolean
   halfBlock?: boolean
   singleClick?: boolean
@@ -235,6 +236,13 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
 
   return {
     onKeyDown(event: React.KeyboardEvent<HTMLCanvasElement>) { if (event.key === 'Escape') finish(true); onKey(event) },
+    onDoubleClick(event: React.MouseEvent<HTMLCanvasElement>) {
+      if (!onDoublePoint || event.button !== 0 || event.altKey || navigating) return
+      const hit = pointAt(event, true)
+      if (!hit) return
+      event.preventDefault()
+      onDoublePoint(hit.point, { clientX: event.clientX, altKey: false, half: hit.half, subcell: hit.subcell, tolerance: hit.tolerance })
+    },
     onBlur: () => finish(true),
     onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
       if (event.button !== 0 || dragPointer.current) return
@@ -483,7 +491,7 @@ function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll, label 
   </div>
 }
 
-export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', nativeWidth = 8, primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
+export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', nativeWidth = 8, primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onDoublePoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
   const host = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const canvasId = useId()
@@ -492,7 +500,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   const [scrollbarHeight, setScrollbarHeight] = useState(0)
   const { width: cellWidth, height: cellHeight } = cellSize
   const pointerHandlers = useCanvasPointer(canvas, {
-    top, rows, columns: editor.width, cellWidth, gutter: GUTTER, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint,
+    top, rows, columns: editor.width, cellWidth, gutter: GUTTER, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onDoublePoint,
     onEnd: (_point, _moved, canceled) => onEnd(canceled), onScroll, onKey,
   })
   const resizeRows = useEffectEvent((next: number) => {

@@ -1,14 +1,127 @@
 import { BLOCK_GLYPHS } from './ansi'
 import type { DocumentFormat } from './colors'
-import { EMPTY, MAX_ROW, WIDTH, key, pointFromKey, validateCell, validPoint, type Cell, type Point } from './model'
+import { EMPTY, MAX_ROW, WIDTH, key, pointFromKey, validateCell, validateWidth, validPoint, type Cell, type Point } from './model'
 import { glyphMask } from './vgaFont'
 
-export interface PathNode { point: Point; incoming: Point; outgoing: Point }
+export interface PathNode { point: Point; incoming: Point; outgoing: Point; linked?: boolean }
 export interface BezierPath { origin: number; nodes: PathNode[]; closed: boolean }
 
 const SAMPLE_WIDTH = 8
 const SAMPLE_HEIGHT = 16
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+const interpolate = (a: Point, b: Point, t: number): Point => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+
+function splitSegment(a: PathNode, b: PathNode, t: number) {
+  const ab = interpolate(a.point, a.outgoing, t), bc = interpolate(a.outgoing, b.incoming, t)
+  const cd = interpolate(b.incoming, b.point, t)
+  const incoming = interpolate(ab, bc, t), outgoing = interpolate(bc, cd, t)
+  return { ab, cd, node: { point: interpolate(incoming, outgoing, t), incoming, outgoing } }
+}
+
+function sampleCurve(a: Point, b: Point, c: Point, d: Point, emit: (point: Point, t: number) => void, depth = 0, start = 0, end = 1): void {
+  // Square VGA-pixel proportions, retaining local row precision.
+  const deviation = Math.max(
+    Math.hypot(b.x - (2 * a.x + d.x) / 3, 2 * (b.y - (2 * a.y + d.y) / 3)),
+    Math.hypot(c.x - (a.x + 2 * d.x) / 3, 2 * (c.y - (a.y + 2 * d.y) / 3)),
+  )
+  if (deviation <= 1 / 32) { emit(d, end); return }
+  if (depth === 16) throw new Error('The path is too complex to rasterize. Shorten its curve handles.')
+  const ab = midpoint(a, b), bc = midpoint(b, c), cd = midpoint(c, d)
+  const abc = midpoint(ab, bc), bcd = midpoint(bc, cd), center = midpoint(abc, bcd)
+  const t = (start + end) / 2
+  sampleCurve(a, ab, abc, center, emit, depth + 1, start, t)
+  sampleCurve(center, bcd, cd, d, emit, depth + 1, t, end)
+}
+
+export function hitPathSegment(path: BezierPath, point: Point, tolerance: Point): { index: number; t: number } | undefined {
+  if (![point.x, point.y, tolerance.x, tolerance.y].every(Number.isFinite) || tolerance.x <= 0 || tolerance.y <= 0) {
+    throw new Error('Path hit testing requires finite coordinates and positive tolerance.')
+  }
+  let nearest = 1, hit: { index: number; t: number } | undefined
+  const count = path.closed ? path.nodes.length : path.nodes.length - 1
+  let samples = 0
+  for (let index = 0; index < count; index++) {
+    const a = path.nodes[index], b = path.nodes[(index + 1) % path.nodes.length]
+    const distance = (t: number) => {
+      const p = splitSegment(a, b, t).node.point
+      return Math.hypot((p.x - point.x) / tolerance.x, (p.y - point.y) / tolerance.y)
+    }
+    let previous = a.point, previousT = 0, left = 0, right = 1, best = Infinity
+    const emit = (p: Point, t: number) => {
+      if (++samples > 65_536) throw new Error('The path is too complex to edit. Shorten its curve handles.')
+      const dx = (p.x - previous.x) / tolerance.x, dy = (p.y - previous.y) / tolerance.y
+      const px = (point.x - previous.x) / tolerance.x, py = (point.y - previous.y) / tolerance.y
+      const length = dx * dx + dy * dy
+      const fraction = length ? Math.max(0, Math.min(1, (px * dx + py * dy) / length)) : 0
+      const value = Math.hypot(px - dx * fraction, py - dy * fraction)
+      if (value < best) { best = value; left = previousT; right = t }
+      previous = p; previousT = t
+    }
+    if (a.point.x === a.outgoing.x && a.point.y === a.outgoing.y &&
+        b.point.x === b.incoming.x && b.point.y === b.incoming.y) emit(b.point, 1)
+    else sampleCurve(a.point, a.outgoing, b.incoming, b.point, emit)
+    for (let step = 0; step < 32; step++) {
+      const a = left + (right - left) / 3, b = right - (right - left) / 3
+      if (distance(a) < distance(b)) right = b
+      else left = a
+    }
+    const t = (left + right) / 2, value = distance(t)
+    if (value < nearest) { nearest = value; hit = { index, t } }
+  }
+  return hit
+}
+
+export function insertPathNode(path: BezierPath, index: number, t: number): BezierPath {
+  const a = selectedNode(path, index)
+  const next = (index + 1) % path.nodes.length
+  if ((!path.closed && next === 0) || !Number.isFinite(t) || t <= 0 || t >= 1) {
+    throw new Error('Select a location inside an existing path segment.')
+  }
+  const { ab, cd, node } = splitSegment(a, path.nodes[next], t)
+  const nodes = path.nodes.map((value, position) => position === index ? { ...value, outgoing: ab }
+    : position === next ? { ...value, incoming: cd } : value)
+  nodes.splice(index + 1, 0, node)
+  return { ...path, nodes }
+}
+
+export function movePathHandle(node: PathNode, part: 'incoming' | 'outgoing', position: Point): PathNode {
+  const other = part === 'incoming' ? 'outgoing' : 'incoming'
+  if (!node.linked) return { ...node, [part]: position }
+  const dx = position.x - node.point.x, dy = position.y - node.point.y
+  const length = Math.hypot(dx, 2 * dy)
+  const oppositeLength = Math.hypot(node[other].x - node.point.x, 2 * (node[other].y - node.point.y))
+  const scale = length ? (oppositeLength || length) / length : 0
+  return { ...node, [part]: position, [other]: { x: node.point.x - dx * scale, y: node.point.y - dy * scale } }
+}
+
+export function linkPathHandles(path: BezierPath, index: number, linked: boolean): BezierPath {
+  let node = { ...selectedNode(path, index), linked }
+  if (linked) {
+    const part = node.outgoing.x !== node.point.x || node.outgoing.y !== node.point.y ? 'outgoing' : 'incoming'
+    node = { ...movePathHandle(node, part, node[part]), linked }
+  }
+  return { ...path, nodes: path.nodes.map((value, position) => position === index ? node : value) }
+}
+
+export function translatePath(path: BezierPath, delta: Point, width = WIDTH): BezierPath {
+  validateWidth(width)
+  if (!Number.isFinite(delta.x) || !Number.isFinite(delta.y)) throw new Error('Path movement must use finite coordinates.')
+  let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity
+  for (const { point } of path.nodes) {
+    left = Math.min(left, point.x); right = Math.max(right, point.x)
+    top = Math.min(top, point.y); bottom = Math.max(bottom, point.y)
+  }
+  const dx = Math.min(width - right, Math.max(-left, delta.x))
+  const dy = Math.min(MAX_ROW - path.origin - bottom, Math.max(-path.origin - top, delta.y))
+  const shift = (p: Point): Point => ({ x: p.x + dx, y: p.y + dy })
+  return { ...path, nodes: path.nodes.map(node => ({ ...node, point: shift(node.point), incoming: shift(node.incoming), outgoing: shift(node.outgoing) })) }
+}
+
+export function pathContainsPoint(path: BezierPath, point: Point): boolean {
+  if (!path.closed || path.nodes.length < 3) return false
+  const hits = intersections(flatten(path), point.y)
+  return hits.filter(x => x > point.x).length % 2 === 1
+}
 
 function selectedNode(path: BezierPath, index: number): PathNode {
   if (!Number.isInteger(index) || index < 0 || index >= path.nodes.length) throw new Error('Select an existing path node.')
@@ -55,24 +168,15 @@ function flatten(path: BezierPath): Point[] {
     }
   }
   const result: Point[] = [path.nodes[0].point]
-  const curve = (a: Point, b: Point, c: Point, d: Point, depth: number) => {
-    // Measure in square VGA-pixel proportions, retaining local row precision.
-    const deviation = Math.max(
-      Math.hypot(b.x - (2 * a.x + d.x) / 3, 2 * (b.y - (2 * a.y + d.y) / 3)),
-      Math.hypot(c.x - (a.x + 2 * d.x) / 3, 2 * (c.y - (a.y + 2 * d.y) / 3)),
-    )
-    if (deviation <= 1 / 32) { result.push(d); return }
-    if (depth === 16 || result.length >= 65_536) throw new Error('The path is too complex to rasterize. Shorten its curve handles.')
-    const ab = midpoint(a, b), bc = midpoint(b, c), cd = midpoint(c, d)
-    const abc = midpoint(ab, bc), bcd = midpoint(bc, cd), center = midpoint(abc, bcd)
-    curve(a, ab, abc, center, depth + 1)
-    curve(center, bcd, cd, d, depth + 1)
+  const emit = (point: Point) => {
+    if (result.length >= 65_536) throw new Error('The path is too complex to rasterize. Shorten its curve handles.')
+    result.push(point)
   }
   for (let index = 0; index < path.nodes.length; index++) {
     const a = path.nodes[index], b = path.nodes[(index + 1) % path.nodes.length]
     if (a.point.x === a.outgoing.x && a.point.y === a.outgoing.y &&
         b.point.x === b.incoming.x && b.point.y === b.incoming.y) result.push(b.point)
-    else curve(a.point, a.outgoing, b.incoming, b.point, 0)
+    else sampleCurve(a.point, a.outgoing, b.incoming, b.point, emit)
   }
   return result
 }

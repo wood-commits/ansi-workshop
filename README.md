@@ -207,6 +207,10 @@ without another click. Hovering with all menus closed does not open one.
   Finish also closes an open path. Select a node by clicking it or using the
   Node selector; Delete node, Delete, or Backspace removes the selected node.
   Make curve creates smooth mirrored handles; Make corner collapses them.
+  Lock handles optionally keeps the selected node's handles collinear while
+  retaining their individual lengths. Drag the outline or a closed path's
+  interior to move the whole draft. Double-click a segment to insert a node
+  without changing the curve.
   Deletion preserves closure with at least three nodes, otherwise reopens the
   path. Escape/Cancel discards the draft. Switching tools discards unfinished paths.
   Closed paths preview the result on both canvases using current FG/BG.
@@ -214,7 +218,9 @@ without another click. Hovering with all menus closed does not open one.
   brush glyph. Subtract visits existing art only, cuts to the selected BG,
   and fits surviving colors to blocks; partially clipped text/shading is a
   bitmap-based approximation, not exact glyph clipping. Self-intersections use
-  even-odd filling. Finish is one undo step; drafts are not exported or saved.
+  even-odd filling. Undo/redo covers node additions, edits, movement and closure.
+  Undo after Finish removes its cell edits and restores the editable draft;
+  Redo reapplies it. Drafts are not exported or saved.
 - **Position cursor:** choose Cursor, then click a cell to move without painting.
   Or hold Alt and click with any tool to reposition without switching tools.
   Cursor-only clicks clear the selection without changing art or undo/redo history.

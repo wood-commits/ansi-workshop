@@ -285,10 +285,24 @@ preserves closure with at least three remaining anchors; fewer anchors reopen
 the draft, and deleting the last clears it. Corner conversion collapses both
 handles. Curve conversion creates neighbor-oriented mirrored handles without
 moving the anchor; subsequent handle drags remain independent.
+An optional per-node linked flag keeps handle directions opposite while
+preserving their separate VGA-proportional lengths. Outline/interior drags
+translate all anchors/handles together, clamping anchors at document edges.
+Double-click insertion uses shared adaptive cubic sampling for hit testing
+and de Casteljau splitting to preserve both adjacent curve segments.
 Canceled pointer gestures restore the pre-gesture draft; Escape/tool switching
 discards it. Drafts warn on reload/New/Open, but are not document cells or exports.
 Finish validates the entire result and applies one Editor transaction.
-Agent commands, history and block writes pause while a draft exists.
+App maintains sparse immutable draft snapshots for undo/redo, one per node
+addition, editing command or completed pointer gesture. Canceled gestures add
+no history. Finished drafts are associated with the unique Editor transaction
+version: undoing Finish restores the pre-Finish draft and its draft history;
+redoing Finish reapplies the same cell transaction. A changed draft branches
+its local history; canceling preserves document redo. No-op finishes can also
+restore their draft without undoing unrelated artwork. New/Open clears these
+session-only histories. Saved identity still belongs solely to Editor cells
+and metadata; drafts remain excluded from exports.
+Agent commands and block writes pause while a draft exists.
 
 `path.ts` adaptively subdivides cubics in 1:2 VGA proportions with a 1/32-column
 flatness tolerance. Curve subdivision has an explicit complexity error rather

@@ -7,7 +7,7 @@ import { ArtCanvas, CANVAS_SIZES, ShadeGlyph, VgaPreview, type PointerInput } fr
 import type { Tool } from './tools'
 import { Editor, EMPTY, key, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
-import { convertPathNode, rasterizePath, removePathNode, type BezierPath, type PathNode } from './path'
+import { convertPathNode, hitPathSegment, insertPathNode, linkPathHandles, movePathHandle, pathContainsPoint, rasterizePath, removePathNode, translatePath, type BezierPath, type PathNode } from './path'
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
 import { bucketFill, type FillMode } from './fill'
 import { connectedShape, moveShape } from './move'
@@ -54,6 +54,10 @@ function ToolIcon({ tool }: { tool: Tool }) {
 }
 
 const clampRow = (row: number) => Math.min(MAX_ROW, Math.max(0, row))
+interface PathSnapshot { path?: BezierPath; selection?: number }
+interface FinishedPath {
+  snapshot: PathSnapshot; undo: PathSnapshot[]; fg: number; bg: number; subtract: boolean; version: number; beforeVersion: number; changed: boolean
+}
 
 export function App() {
   const [initialSettings] = useState(loadSettings)
@@ -61,7 +65,16 @@ export function App() {
   const [editor, setEditor] = useState(() => new Editor())
   const [revision, setRevision] = useState(0)
   const revisionCounter = useRef(0)
-  const refresh = () => { revisionCounter.current++; setRevision(revisionCounter.current) }
+  const refresh = () => {
+    revisionCounter.current++; setRevision(revisionCounter.current)
+    const finished = restoredFinish.current
+    setPathHistory({
+      dragging: !!pathDrag.current,
+      undo: pathUndo.current.length > 0 || !!unchangedFinishes.current.get(editor.version)?.length,
+      redo: pathRedo.current.length > 0 || (!!finished && pathDraft.current === finished.snapshot.path &&
+        editor.version === finished.beforeVersion && (!finished.changed || editor.canRedo)),
+    })
+  }
   const [agentDocument, setAgentDocument] = useState(0)
   const [cursor, setCursor] = useState<Point>({ x: 0, y: 0 })
   const [top, setTop] = useState(0)
@@ -74,9 +87,15 @@ export function App() {
   const [path, setPath] = useState<BezierPath>()
   const [pathNode, setPathNode] = useState<number>()
   const pathDraft = useRef<BezierPath | undefined>(undefined)
+  const pathUndo = useRef<PathSnapshot[]>([])
+  const pathRedo = useRef<PathSnapshot[]>([])
+  const finishedPaths = useRef(new Map<number, FinishedPath>())
+  const restoredFinish = useRef<FinishedPath | undefined>(undefined)
+  const unchangedFinishes = useRef(new Map<number, FinishedPath[]>())
+  const [pathHistory, setPathHistory] = useState({ undo: false, redo: false, dragging: false })
   const [pathSubtract, setPathSubtract] = useState(false)
   const pathDrag = useRef<{
-    index: number; part: keyof PathNode | 'new'; start: Point; node: PathNode; before: BezierPath; beforeSelection?: number
+    index: number; part: 'point' | 'incoming' | 'outgoing' | 'new' | 'path'; start: Point; node: PathNode; before?: BezierPath; beforeSelection?: number
   } | undefined>(undefined)
   const [drawMode, setDrawMode] = useState<'full' | 'half'>('full')
   const [movePreview, setMovePreview] = useState<ReadonlyMap<string, Cell>>()
@@ -194,24 +213,35 @@ export function App() {
   }
   const cancelPath = () => {
     pathDraft.current = undefined; pathDrag.current = undefined
+    pathUndo.current = []; pathRedo.current = []; restoredFinish.current = undefined
     setPath(undefined); setPathNode(undefined)
+    refresh()
     setMessage('Path canceled. The document is unchanged.')
   }
   const setTool = (next: Tool) => {
-    if (next !== 'path' && pathDraft.current) cancelPath()
+    if (next !== 'path' && (pathDraft.current || pathUndo.current.length || pathRedo.current.length)) cancelPath()
     setActiveTool(next)
   }
-  const updatePath = (next: BezierPath) => {
+  const updatePath = (next: BezierPath | undefined) => {
     pathDraft.current = next; setPath(next); setError('')
+  }
+  const rememberPath = (before: PathSnapshot) => {
+    if (before.path === pathDraft.current) return
+    pathUndo.current.push(before); pathRedo.current = []; restoredFinish.current = undefined
+    refresh()
+  }
+  const editPath = (next: BezierPath, selection = pathNode) => {
+    const before = { path: pathDraft.current, selection: pathNode }
+    updatePath(next.nodes.length ? next : undefined); setPathNode(next.nodes.length ? selection : undefined)
+    rememberPath(before)
   }
   const deletePathNode = () => {
     const draft = pathDraft.current
     if (!draft?.nodes.length) { setMessage('Select a path node to delete.'); return }
     const index = pathNode ?? draft.nodes.length - 1
     const next = removePathNode(draft, index)
-    if (!next.nodes.length) { cancelPath(); setMessage('Last node deleted. The path draft is cleared.'); return }
-    updatePath(next)
-    setPathNode(Math.min(index, next.nodes.length - 1))
+    editPath(next, Math.min(index, next.nodes.length - 1))
+    if (!next.nodes.length) { setMessage('Last node deleted. Undo restores the draft.'); return }
     setMessage(next.nodes.length < 3 ? 'Node deleted. Add at least three nodes before finishing.' : 'Node deleted. Remaining nodes stay editable.')
   }
   const finishPath = () => {
@@ -222,8 +252,19 @@ export function App() {
       const version = editor.version
       for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
       editor.commit(); refresh()
+      const finished: FinishedPath = {
+        snapshot: { path: draft, selection: pathNode }, undo: [...pathUndo.current],
+        fg, bg, subtract: pathSubtract, version: editor.version, beforeVersion: version, changed: editor.version !== version,
+      }
+      if (finished.changed) finishedPaths.current.set(editor.version, finished)
+      else {
+        const finishes = unchangedFinishes.current.get(editor.version) ?? []
+        unchangedFinishes.current.set(editor.version, [...finishes, finished])
+      }
+      pathUndo.current = []; pathRedo.current = []; restoredFinish.current = undefined
       pathDraft.current = undefined; pathDrag.current = undefined
       setPath(undefined); setPathNode(undefined); setError('')
+      refresh()
       setMessage(editor.version === version ? 'Path unchanged. No cells were altered.'
         : pathSubtract ? 'Path subtracted. Undo restores the original art.' : 'Path filled. Undo removes the entire path.')
     } catch (cause) { report(cause) }
@@ -234,13 +275,19 @@ export function App() {
     setTop(previous => next.y < previous ? next.y : next.y >= previous + visibleRows ? next.y - visibleRows + 1 : previous)
     return next
   }
-  const scroll = useCallback((delta: number) => setTop(previous => clampRow(previous + delta)), [])
+  const scroll = useCallback((delta: number) => setTop(previous => clampRow(previous + delta)), [setTop])
   const commit = () => { editor.commit(); lastPoint.current = undefined; lastHalfPoint.current = undefined; refresh() }
   const endPointer = (canceled: boolean) => {
     if (tool === 'path') {
       const drag = pathDrag.current
       pathDrag.current = undefined
-      if (canceled && drag) { updatePath(drag.before); setPathNode(drag.beforeSelection) }
+      if (drag) {
+        if (canceled) { updatePath(drag.before); setPathNode(drag.beforeSelection) }
+        else if (JSON.stringify(drag.before) !== JSON.stringify(pathDraft.current)) {
+          rememberPath({ path: drag.before, selection: drag.beforeSelection })
+        }
+        refresh()
+      }
       return
     }
     const moving = moveDrag.current
@@ -281,8 +328,53 @@ export function App() {
         : 'Primitive placed. Undo removes the entire shape.')
     } catch (cause) { report(cause) }
   }
-  const undo = () => { if (pathDraft.current) return; editor.undo(); refresh() }
-  const redo = () => { if (pathDraft.current) return; editor.redo(); refresh() }
+  const restorePath = (snapshot: PathSnapshot) => {
+    updatePath(snapshot.path); setPathNode(snapshot.selection)
+    setActiveTool('path'); clearSelection(); refresh()
+  }
+  const undo = () => {
+    if (pathDrag.current) return
+    const previous = pathUndo.current.pop()
+    if (previous) {
+      pathRedo.current.push({ path: pathDraft.current, selection: pathNode })
+      restorePath(previous); return
+    }
+    if (pathDraft.current) return
+    const unchanged = unchangedFinishes.current.get(editor.version)
+    const finished = unchanged?.pop() ?? finishedPaths.current.get(editor.version)
+    if (!unchanged?.length) unchangedFinishes.current.delete(editor.version)
+    pathRedo.current = []
+    if (!finished || finished.changed) editor.undo()
+    if (finished) {
+      pathUndo.current = [...finished.undo]; pathRedo.current = []; restoredFinish.current = finished
+      setFg(finished.fg); setBg(finished.bg); setPathSubtract(finished.subtract)
+      restorePath(finished.snapshot)
+      setMessage('Finish undone. The path is editable again.')
+    } else refresh()
+  }
+  const redo = () => {
+    if (pathDrag.current) return
+    const next = pathRedo.current.pop()
+    if (next) {
+      pathUndo.current.push({ path: pathDraft.current, selection: pathNode })
+      restorePath(next); return
+    }
+    const finished = restoredFinish.current
+    if (finished && pathDraft.current === finished.snapshot.path && editor.version === finished.beforeVersion &&
+        (!finished.changed || editor.canRedo)) {
+      if (finished.changed) editor.redo()
+      else {
+        const finishes = unchangedFinishes.current.get(editor.version) ?? []
+        unchangedFinishes.current.set(editor.version, [...finishes, finished])
+      }
+      pathUndo.current = []; restoredFinish.current = undefined
+      updatePath(undefined); setPathNode(undefined); refresh()
+      setMessage('Path finish redone.'); return
+    }
+    if (!pathDraft.current) { editor.redo(); refresh() }
+  }
+  const canUndo = !pathHistory.dragging && (pathHistory.undo || (!path && editor.canUndo))
+  const canRedo = !pathHistory.dragging && (pathHistory.redo || (!path && editor.canRedo))
   const historyKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.altKey || event.nativeEvent.isComposing || !(event.ctrlKey || event.metaKey)) return
     if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog')) return
@@ -321,6 +413,8 @@ export function App() {
   const clearSelection = () => { setAnchor(undefined); setSelectionEnd(undefined) }
   const navigate = (next: Point) => { clearSelection(); move(next) }
   const replaceDocument = (next: Editor, filename: string, handle?: AnsiFileHandle) => {
+    pathUndo.current = []; pathRedo.current = []; finishedPaths.current.clear()
+    restoredFinish.current = undefined; unchangedFinishes.current.clear()
     if (next.format !== editor.format) { setFg(7); setBg(0) }
     setEditor(next); setCursor({ x: 0, y: 0 }); setTop(0); setGoRow('1')
     setAgentDocument(value => value + 1)
@@ -412,6 +506,7 @@ export function App() {
   const keyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (tool === 'path' && pathDraft.current) {
       if (event.key === 'Tab') return
+      if (!event.altKey && (event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) return
       event.preventDefault()
       if (event.key === 'Escape') cancelPath()
       else if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) finishPath()
@@ -495,7 +590,7 @@ export function App() {
       const position = { x: next.x + pointer.subcell.x, y: next.y - draft.origin + pointer.subcell.y }
       setCursor(next); clearSelection()
       if (start) {
-        let hit: { index: number; part: keyof PathNode } | undefined
+        let hit: { index: number; part: 'point' | 'incoming' | 'outgoing' } | undefined
         let nearest = 1
         for (let index = 0; index < draft.nodes.length; index++) {
           const node = draft.nodes[index]
@@ -507,17 +602,23 @@ export function App() {
           }
         }
         if (hit?.index === 0 && hit.part === 'point' && !draft.closed && draft.nodes.length >= 3) {
-          updatePath({ ...draft, closed: true })
-          setPathNode(0)
+          editPath({ ...draft, closed: true }, 0)
           setMessage('Path closed. Drag nodes or handles to adjust; Finish or Enter applies it.')
           return
         }
+        let segment: ReturnType<typeof hitPathSegment>, inside = false
+        try {
+          segment = hit ? undefined : hitPathSegment(draft, position, pointer.tolerance)
+          inside = !hit && !segment && draft.closed && pathContainsPoint(draft, position)
+        } catch (cause) { report(cause); return }
         if (hit) {
           pathDrag.current = { ...hit, start: position, node: draft.nodes[hit.index], before: draft, beforeSelection: pathNode }
           setPathNode(hit.index)
+        } else if (segment || inside) {
+          pathDrag.current = { index: 0, part: 'path', start: position, node: draft.nodes[0], before: draft, beforeSelection: pathNode }
         } else if (!draft.closed) {
           const node = { point: position, incoming: position, outgoing: position }
-          pathDrag.current = { index: draft.nodes.length, part: 'new', start: position, node, before: draft, beforeSelection: pathNode }
+          pathDrag.current = { index: draft.nodes.length, part: 'new', start: position, node, before: pathDraft.current, beforeSelection: pathNode }
           setPathNode(draft.nodes.length)
           updatePath({ ...draft, nodes: [...draft.nodes, node] })
         } else {
@@ -529,15 +630,21 @@ export function App() {
         if (!drag) return
         const dx = position.x - drag.start.x, dy = position.y - drag.start.y
         const shift = (p: Point): Point => ({ x: p.x + dx, y: p.y + dy })
+        if (drag.part === 'path' && drag.before) {
+          try { updatePath(translatePath(drag.before, { x: dx, y: dy }, editor.width)) }
+          catch (cause) { report(cause) }
+          return
+        }
         const node = drag.part === 'new'
           ? { ...drag.node, outgoing: position, incoming: { x: 2 * drag.node.point.x - position.x, y: 2 * drag.node.point.y - position.y } }
           : drag.part === 'point'
-            ? { point: shift(drag.node.point), incoming: shift(drag.node.incoming), outgoing: shift(drag.node.outgoing) }
-            : { ...draft.nodes[drag.index], [drag.part]: shift(drag.node[drag.part]) }
+            ? { ...drag.node, point: shift(drag.node.point), incoming: shift(drag.node.incoming), outgoing: shift(drag.node.outgoing) }
+            : movePathHandle(drag.node, drag.part === 'incoming' ? 'incoming' : 'outgoing', shift(drag.node[drag.part === 'incoming' ? 'incoming' : 'outgoing']))
         updatePath({ ...draft, nodes: draft.nodes.map((value, index) => index === drag.index ? node : value) })
       }
       setMessage(draft.closed ? 'Path closed. Drag nodes or handles; Finish or Enter applies; Escape cancels.'
         : 'Click to add nodes; drag to create curves. Click the first node to close; Finish or Enter applies; Escape cancels.')
+      refresh()
     } else if (tool === 'fill' || tool === 'eyedropper') {
       if (!start) return
       clearSelection()
@@ -651,6 +758,20 @@ export function App() {
       event.currentTarget.closest('details')?.querySelector('summary')?.focus()
     }
   }
+  const doublePoint = (next: Point, pointer: PointerInput) => {
+    const draft = pathDraft.current
+    if (tool !== 'path' || !draft || pathDrag.current) return
+    const position = { x: next.x + pointer.subcell.x, y: next.y - draft.origin + pointer.subcell.y }
+    // Double-clicking anchors selects them rather than inserting coincident nodes.
+    if (draft.nodes.some(node => Math.hypot((node.point.x - position.x) / pointer.tolerance.x,
+      (node.point.y - position.y) / pointer.tolerance.y) < 1)) return
+    try {
+      const hit = hitPathSegment(draft, position, pointer.tolerance)
+      if (!hit) { setMessage('Double-click an existing path segment to insert a node.'); return }
+      editPath(insertPathNode(draft, hit.index, hit.t), hit.index + 1)
+      setMessage('Node inserted. The curve is preserved; drag the node or handles to adjust.')
+    } catch (cause) { report(cause) }
+  }
   const toggleMenu = (event: React.MouseEvent<HTMLElement>, menu: typeof openMenu) => {
     event.preventDefault()
     setOpenMenu(previous => previous === menu ? undefined : menu)
@@ -692,8 +813,8 @@ export function App() {
         <button onClick={() => { editor.commit(); refresh(); setShowSauce(true) }} disabled={saving || opening}>SAUCE…</button>
       </div></details>
       <details open={openMenu === 'Edit'}><summary onMouseEnter={() => hoverMenu('Edit')} onClick={event => toggleMenu(event, 'Edit')}>Edit</summary><div className="menu-popup wide-menu" onClick={closeMenu}>
-        <button onClick={undo} disabled={!editor.canUndo || !!path}>Undo <kbd>Ctrl Z</kbd></button>
-        <button onClick={redo} disabled={!editor.canRedo || !!path}>Redo <kbd>Ctrl Shift Z</kbd></button>
+        <button onClick={undo} disabled={!canUndo}>Undo <kbd>Ctrl Z</kbd></button>
+        <button onClick={redo} disabled={!canRedo}>Redo <kbd>Ctrl Shift Z</kbd></button>
         <div className="menu-label">Block operations</div>
         <button onClick={() => setTool(tool === 'select' ? 'draw' : 'select')}>{tool === 'select' ? '✓ ' : ''}Block select toggle</button>
         <button onClick={copy} disabled={!selection}>Copy <kbd>Ctrl C</kbd></button>
@@ -821,8 +942,8 @@ export function App() {
         <button aria-pressed={tool === 'eyedropper'} title="Pick foreground and background colors without changing the brush glyph" onClick={() => setTool('eyedropper')}><ToolIcon tool="eyedropper" />Eyedropper</button>
       </div>
       <div className="tool-group history-tools">
-        <button onClick={undo} disabled={!editor.canUndo || !!path} title="Undo">↶</button>
-        <button onClick={redo} disabled={!editor.canRedo || !!path} title="Redo">↷</button>
+        <button onClick={undo} disabled={!canUndo} title="Undo">↶</button>
+        <button onClick={redo} disabled={!canRedo} title="Redo">↷</button>
       </div>
       <form className="row-navigation" onSubmit={event => {
         event.preventDefault()
@@ -863,7 +984,7 @@ export function App() {
             setPathSubtract(subtract)
           }}><option value="fill">Fill</option><option value="subtract">Subtract</option></select></label>
           <button disabled={!path || path.nodes.length < 3} onClick={() => {
-            if (pathDraft.current) updatePath({ ...pathDraft.current, closed: !pathDraft.current.closed })
+            if (pathDraft.current) editPath({ ...pathDraft.current, closed: !pathDraft.current.closed })
           }}>{path?.closed ? 'Reopen path' : 'Close path'}</button>
           <button disabled={!path || path.nodes.length < 3} onClick={finishPath}>Finish path</button>
           <button disabled={!path} onClick={cancelPath}>Cancel path</button>
@@ -882,11 +1003,15 @@ export function App() {
             aria-pressed={!!selectedPathNode && (kind === 'Curve') === !!pathNodeCurved}
             disabled={!selectedPathNode || (kind === 'Curve') === !!pathNodeCurved} onClick={() => {
             if (pathDraft.current && pathNode !== undefined) {
-              updatePath(convertPathNode(pathDraft.current, pathNode, kind === 'Curve'))
+              editPath(convertPathNode(pathDraft.current, pathNode, kind === 'Curve'))
               setMessage(`Node ${pathNode + 1} converted to ${kind.toLowerCase()}. Drag its node or handles to adjust.`)
             }
           }}>Make {kind.toLowerCase()}</button>)}
-          <span className="muted">Drag nodes/handles · Enter finishes · Esc cancels</span>
+          <label><input type="checkbox" aria-label="Lock handles" checked={!!selectedPathNode?.linked} disabled={!selectedPathNode}
+            onChange={event => {
+              if (pathDraft.current && pathNode !== undefined) editPath(linkPathHandles(pathDraft.current, pathNode, event.target.checked))
+            }} />Lock handles</label>
+          <span className="muted">Drag outline/interior to move · Double-click edge to add node · Enter finishes · Esc cancels</span>
         </div>}
         {tool === 'primitive' && <div className="primitive-controls">
           <label>Mode <select aria-label="Primitive mode" value={primitiveSubtract ? 'subtract' : 'draw'} onChange={event => setPrimitiveSubtract(event.target.value === 'subtract')}>
@@ -931,7 +1056,7 @@ export function App() {
       <section className="editor-panel" aria-label="Screen editor">
         <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>{editor.width} × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : ice ? 'ANSI (iCE Colors)' : 'ANSI'}</span></span></div>
         <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth}
-          primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode}
+          primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode} onDoublePoint={tool === 'path' ? doublePoint : undefined}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
           halfBlock={tool === 'draw' && drawMode === 'half'}
           navigating={tool === 'cursor'} onNavigate={navigate} onPoint={point} onEnd={endPointer} onScroll={scroll} onKey={keyDown} onRows={setVisibleRows} />
