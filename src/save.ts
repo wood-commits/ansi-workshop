@@ -1,5 +1,6 @@
 import { ansiChunks, asciiChunks } from './export'
 import type { Cell } from './model'
+import type { SauceMetadata } from './sauce'
 
 export interface AnsiFileHandle {
   name: string
@@ -39,8 +40,9 @@ export async function writeAnsi(
   handle: AnsiFileHandle | undefined,
   name: string,
   signal: AbortSignal,
+  sauce?: SauceMetadata,
 ): Promise<void> {
-  await writeChunks(ansiChunks(cells), handle, name, signal)
+  await writeChunks(ansiChunks(cells, sauce), handle, name, signal)
 }
 
 export async function writeAscii(

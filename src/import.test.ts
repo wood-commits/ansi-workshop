@@ -181,12 +181,12 @@ describe('CP437 ANSI import', () => {
       .toEqual(new Map([['0,0', { code: 65, fg: 7, bg: 0 }]]))
   })
 
-  it('reads only the bounded record and comment signature before streaming the content', async () => {
+  it('reads only the bounded record and comment block before streaming the content', async () => {
     const file = sauceFile('A\x1a', 255).file()
     const slice = vi.spyOn(file, 'slice')
     await readAnsi(file, new AbortController().signal)
     expect(slice.mock.calls).toEqual([
-      [file.size - 128], [2, 7], [0, 2],
+      [file.size - 128], [2, 2 + 5 + 255 * 64], [0, 2],
     ])
   })
 

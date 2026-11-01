@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { App } from './App'
 import { chooseFile, writeAnsi, writeAscii } from './save'
 import { chooseAnsiFile } from './open'
-import { readAnsi } from './import'
+import { readAnsi, readAnsiDocument } from './import'
+import { emptySauce } from './sauce'
 import { Editor, MAX_ROW, pointFromKey, type Cell } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
 import { rasterizeGradient, type GradientKind } from './gradient'
@@ -13,7 +14,10 @@ import fontNotice from './assets/fonts/NOTICE.txt?raw'
 import editorLicense from '../LICENSE?raw'
 
 vi.mock('./open', () => ({ chooseAnsiFile: vi.fn() }))
-vi.mock('./import', () => ({ readAnsi: vi.fn() }))
+vi.mock('./import', () => {
+  const readAnsi = vi.fn()
+  return { readAnsi, readAnsiDocument: vi.fn(async (...args) => ({ cells: await readAnsi(...args) })) }
+})
 
 vi.mock('./save', () => ({
   hasNativeSave: () => true,
@@ -68,6 +72,86 @@ async function saveSnapshot() {
   await waitFor(() => expect(writeAnsi).toHaveBeenCalled())
   return vi.mocked(writeAnsi).mock.calls.at(-1)![0]
 }
+function sauceDialog() {
+  fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+  fireEvent.click(screen.getByRole('button', { name: 'SAUCE…' }))
+  return screen.getByRole('dialog', { name: 'SAUCE metadata' })
+}
+describe('SAUCE dialog', () => {
+  it('adds metadata, saves it, and undoes/redoes removal without modifying art', async () => {
+    render(<App />)
+    press('F4')
+    const dialog = sauceDialog()
+    expect(within(dialog).getByText(/no SAUCE metadata/)).not.toBeNull()
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Café' } })
+    fireEvent.change(within(dialog).getByLabelText(/Comments/), { target: { value: 'First\nSecond' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    expect(screen.getByText('untitled.ans *')).not.toBeNull()
+    const cells = await saveSnapshot()
+    expect(cells.size).toBe(1)
+    expect(vi.mocked(writeAnsi).mock.calls.at(-1)![4]).toMatchObject({ title: 'Café', comments: ['First', 'Second'] })
+    await waitFor(() => expect(screen.queryByText('test.ans *')).toBeNull())
+    const reopened = sauceDialog()
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Remove SAUCE' }))
+    expect(screen.getByText('test.ans *')).not.toBeNull()
+    press('z', { ctrlKey: true })
+    expect(screen.queryByText('test.ans *')).toBeNull()
+    press('y', { ctrlKey: true })
+    await saveSnapshot()
+    expect(vi.mocked(writeAnsi).mock.calls.at(-1)![4]).toBeUndefined()
+  })
+  it('cancels drafts, reports invalid inputs, and restores File menu focus', () => {
+    render(<App />)
+    let dialog = sauceDialog()
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Not applied' } })
+    fireEvent.keyDown(within(dialog).getByLabelText(/Title/), { key: 'Escape' })
+    expect(document.activeElement).toBe(screen.getByText('File', { selector: 'summary' }))
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    dialog = sauceDialog()
+    expect((within(dialog).getByLabelText(/Title/) as HTMLInputElement).value).toBe('')
+    fireEvent.change(within(dialog).getByLabelText(/Date/), { target: { value: '20260229' } })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    expect(within(dialog).getByRole('alert').textContent).toContain('real date')
+    expect(log).toHaveBeenCalled()
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+  })
+  it('shows imported metadata without dirtying it and clears it on New', async () => {
+    const sauce = { ...emptySauce(), title: 'Imported', fontName: 'IBM VGA', flags: 4 }
+    vi.mocked(readAnsiDocument).mockResolvedValueOnce({ cells: new Map(), sauce })
+    render(<App />)
+    fileAction('open')
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Opened'))
+    const dialog = sauceDialog()
+    expect((within(dialog).getByLabelText(/Title/) as HTMLInputElement).value).toBe('Imported')
+    expect(within(dialog).getByText('IBM VGA')).not.toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    expect(screen.queryByText('opened.ans *')).toBeNull()
+    press('n', { ctrlKey: true })
+    expect(within(sauceDialog()).getByText(/no SAUCE metadata/)).not.toBeNull()
+  })
+  it('captures metadata before an async save and keeps later metadata edits unsaved', async () => {
+    let finish: (() => void) | undefined
+    vi.mocked(writeAnsi).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    render(<App />)
+    let dialog = sauceDialog()
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Saved snapshot' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    fileAction('save')
+    await waitFor(() => expect(writeAnsi).toHaveBeenCalled())
+    expect(vi.mocked(writeAnsi).mock.calls[0][4]?.title).toBe('Saved snapshot')
+    press('z', { ctrlKey: true })
+    await act(async () => { finish!() })
+    expect(screen.getByText('test.ans *')).not.toBeNull()
+    press('y', { ctrlKey: true })
+    expect(screen.queryByText('test.ans *')).toBeNull()
+    dialog = sauceDialog()
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Later draft' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    expect(screen.getByText('test.ans *')).not.toBeNull()
+    expect(vi.mocked(writeAnsi).mock.calls[0][4]?.title).toBe('Saved snapshot')
+  })
+})
 function asciiCopy() {
   fireEvent.click(screen.getByText('File', { selector: 'summary' }))
   fireEvent.click(screen.getByRole('button', { name: 'Save As ASCII…' }))

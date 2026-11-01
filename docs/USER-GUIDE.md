@@ -475,9 +475,25 @@ Files are read in the browser, not uploaded.
 
 This editor reads static 80-column CP437 ANSI art, not UTF-8 text or every ANSI
 terminal feature. Blink, bright backgrounds/iCE colors, truecolor, and unsupported
-controls produce visible errors. Supported static SAUCE metadata can be read,
-but titles, authors, comments, and font hints are **not preserved on save**.
+controls produce visible errors. Supported static SAUCE metadata is preserved
+on normal ANSI saves; font/display hints do not change canvas settings.
 See [file compatibility](../README.md#open-saved-ansi-files) for the exact limits.
+
+### View or edit SAUCE metadata
+
+Choose **File > SAUCE…** to view or edit the title, author, group, date, and
+comments. Files without metadata show an empty draft; **Apply** adds a SAUCE00
+record. **Cancel** or Escape discards the draft. **Remove SAUCE** removes the
+record. Apply/removal is one undoable document edit and marks the file modified;
+save normally to write the change. New starts without metadata.
+
+Text uses CP437: title allows 35 bytes, author/group 20 each, and comments up to
+255 lines of 64 bytes. Enter a real date as YYYYMMDD, or leave it blank.
+Unsupported characters, invalid dates, and overlong fields show an error without
+changing the document. Read-only format information shows the preserved font
+and display hints. ANSI save recomputes size/dimensions; heights over 65,535 rows
+are unspecified rather than truncating artwork. Metadata-bearing ANSI content
+must fit SAUCE's 32-bit file-size field; remove SAUCE for files over that limit.
 
 ### Choose the right save mode
 
@@ -486,6 +502,7 @@ escape codes or colors. It preserves blocks, shading, and box drawing as raw
 CP437 bytes, not UTF-8 or strict 7-bit ASCII. Use a CP437-aware text viewer.
 The copy leaves the document name, normal ANSI Save destination, and modified
 indicator unchanged; use normal Save as well to keep your colored artwork.
+ASCII and animation copies do not include SAUCE metadata.
 
 | Browser / mode | What Save does |
 | --- | --- |

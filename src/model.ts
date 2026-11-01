@@ -1,4 +1,5 @@
 import { ANSI_COLORS, BACKGROUND_COLORS, flipCharacter } from './ansi'
+import { copySauce, sameSauce, validateSauce, type SauceMetadata } from './sauce'
 
 export const WIDTH = 80
 export const MAX_ROW = Number.MAX_SAFE_INTEGER - 1000
@@ -8,7 +9,7 @@ export interface Rect { left: number; top: number; right: number; bottom: number
 export const EMPTY: Readonly<Cell> = Object.freeze({ code: 32, fg: 7, bg: 0 })
 export interface Block { width: number; height: number; cells: ReadonlyMap<string, Cell> }
 interface Change { point: Point; before: Cell; after: Cell }
-interface Transaction { changes: Change[]; beforeId: number; afterId: number }
+interface Transaction { changes: Change[]; beforeId: number; afterId: number; metadata?: { before?: SauceMetadata; after?: SauceMetadata } }
 
 export function key(x: number, y: number): string { return `${x},${y}` }
 export function pointFromKey(value: string): Point {
@@ -41,7 +42,9 @@ export class Editor {
   private sequence = 0
   private stateId = 0
   private savedId = 0
-  constructor(cells?: ReadonlyMap<string, Cell>) {
+  private metadata: SauceMetadata | undefined
+  constructor(cells?: ReadonlyMap<string, Cell>, sauce?: SauceMetadata) {
+    this.metadata = copySauce(sauce)
     for (const [id, cell] of cells ?? []) {
       const point = pointFromKey(id)
       if (!validPoint(point)) throw new Error('Document coordinates must be safe, nonnegative integers within 80 columns.')
@@ -50,6 +53,7 @@ export class Editor {
     }
   }
   get cells(): ReadonlyMap<string, Cell> { return this.data }
+  get sauce(): SauceMetadata | undefined { return this.metadata }
   get dirty(): boolean { return this.stateId !== this.savedId || this.pending.size > 0 }
   get canUndo(): boolean { return this.undoStack.length > 0 }
   get canRedo(): boolean { return this.redoStack.length > 0 }
@@ -84,11 +88,23 @@ export class Editor {
     this.stateId = afterId
     this.redoStack = []
   }
+  setSauce(sauce: SauceMetadata | undefined): void {
+    if (sauce) validateSauce(sauce)
+    this.commit()
+    if (sameSauce(this.metadata, sauce)) return
+    const after = copySauce(sauce)
+    const afterId = ++this.sequence
+    this.undoStack.push({ changes: [], beforeId: this.stateId, afterId, metadata: { before: this.metadata, after } })
+    this.metadata = after
+    this.stateId = afterId
+    this.redoStack = []
+  }
   undo(): void {
     this.commit()
     const transaction = this.undoStack.pop()
     if (!transaction) return
     for (const change of transaction.changes) this.write(change.point, change.before)
+    if (transaction.metadata) this.metadata = transaction.metadata.before
     this.stateId = transaction.beforeId
     this.redoStack.push(transaction)
   }
@@ -96,6 +112,7 @@ export class Editor {
     const transaction = this.redoStack.pop()
     if (!transaction) return
     for (const change of transaction.changes) this.write(change.point, change.after)
+    if (transaction.metadata) this.metadata = transaction.metadata.after
     this.stateId = transaction.afterId
     this.undoStack.push(transaction)
   }
