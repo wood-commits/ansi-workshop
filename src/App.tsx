@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ANSI_COLORS, BACKGROUND_COLORS, COLOR_NAMES, CP437, PALETTES, characterCode } from './ansi'
+import { colorCss, colorName, type DocumentFormat } from './colors'
+import { TundraColors } from './TundraColors'
+import { readTundraDocument } from './tundra'
 import { ArtCanvas, CANVAS_SIZES, ShadeGlyph, VgaPreview, type PointerInput } from './Canvas'
 import type { Tool } from './tools'
 import type { CanvasFont } from './vgaFont'
@@ -9,7 +12,7 @@ import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine
 import { bucketFill, type FillMode } from './fill'
 import { connectedShape, moveShape } from './move'
 import { rasterizeHalfBlockStroke, type HalfPoint } from './draw'
-import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle } from './save'
+import { chooseFile, hasNativeSave, writeAnsi, writeAscii, writeTundra, type AnsiFileHandle } from './save'
 import { chooseAnsiFile } from './open'
 import { readAnsiDocument } from './import'
 import { SauceDialog } from './SauceDialog'
@@ -114,6 +117,7 @@ export function App() {
   const lastHalfPoint = useRef<HalfPoint | undefined>(undefined)
   const selection = useMemo(() => anchor && selectionEnd ? rectangle(anchor, selectionEnd) : undefined, [anchor, selectionEnd])
   const dirty = editor.dirty
+  const tundra = editor.format === 'tundra'
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -227,6 +231,7 @@ export function App() {
   const clearSelection = () => { setAnchor(undefined); setSelectionEnd(undefined) }
   const navigate = (next: Point) => { clearSelection(); move(next) }
   const replaceDocument = (next: Editor, filename: string, handle?: AnsiFileHandle) => {
+    if (next.format !== editor.format) { setFg(7); setBg(0) }
     setEditor(next); setCursor({ x: 0, y: 0 }); setTop(0); setGoRow('1')
     setAgentDocument(value => value + 1)
     fileHandle.current = handle; setName(filename); clearSelection()
@@ -237,32 +242,33 @@ export function App() {
     moveDrag.current = undefined; setMovePreview(undefined)
     setError(''); refresh()
   }
-  const newFile = () => {
+  const newFile = (format: DocumentFormat = 'ansi') => {
     if (saving || abortOpen.current) return
     if (editor.dirty && !window.confirm('Discard unsaved changes and start a new screen?')) return
-    replaceDocument(new Editor(), 'untitled.ans')
+    replaceDocument(new Editor(undefined, undefined, format), format === 'tundra' ? 'untitled.tnd' : 'untitled.ans')
     setMessage('New 80-column screen. Rows grow as you draw.')
   }
   const openFile = async () => {
     if (saving || abortOpen.current) return
-    if (editor.dirty && !window.confirm('Discard unsaved changes and open another ANSI file?')) return
+    if (editor.dirty && !window.confirm('Discard unsaved changes and open another art file?')) return
     const startingRevision = revisionCounter.current
     const controller = new AbortController()
     abortOpen.current = controller
     setOpening(true); setError('')
-    setMessage('Choose an ANSI file to open. The current document stays in memory until opening succeeds.')
+    setMessage('Choose an ANSI or TundraDraw file to open. The current document stays in memory until opening succeeds.')
     try {
-      const { file, handle } = await chooseAnsiFile()
+      const { file, handle } = await chooseAnsiFile(true)
       controller.signal.throwIfAborted()
       setMessage(`Opening ${file.name}…`)
-      const { cells, sauce } = await readAnsiDocument(file, controller.signal)
+      const format = /\.tnd$/i.test(file.name) ? 'tundra' : 'ansi'
+      const { cells, sauce } = await (format === 'tundra' ? readTundraDocument : readAnsiDocument)(file, controller.signal)
       controller.signal.throwIfAborted()
       if (revisionCounter.current !== startingRevision && editor.dirty &&
           !window.confirm('The current document changed while opening. Discard these latest changes and open the file?')) {
         setMessage('Open canceled. The current document is unchanged.')
         return
       }
-      replaceDocument(new Editor(cells, sauce), file.name, handle)
+      replaceDocument(new Editor(cells, sauce, format), file.name, handle)
       setTool('draw')
       setMessage(`Opened ${file.name}.${handle ? ' Save writes to this browser-authorized file.' : ' Use Save As to choose where to write; this file selection grants read access only.'}`)
     } catch (cause) {
@@ -283,9 +289,9 @@ export function App() {
     const outputName = asciiCopy ? `${name.replace(/\.[^.]*$/, '')}.asc` : name
     try {
       const handle = asciiCopy ? await chooseFile(outputName, 'ascii')
-        : saveAs || !fileHandle.current ? await chooseFile(name) : fileHandle.current
+        : saveAs || !fileHandle.current ? await (tundra ? chooseFile(name, 'tundra') : chooseFile(name)) : fileHandle.current
       if (asciiCopy) await writeAscii(snapshot, handle, outputName, controller.signal)
-      else await writeAnsi(snapshot, handle, outputName, controller.signal, sauce)
+      else await (tundra ? writeTundra : writeAnsi)(snapshot, handle, outputName, controller.signal, sauce)
       if (!asciiCopy) fileHandle.current = handle
       if (handle) {
         if (asciiCopy) setMessage(`Saved ASCII copy ${handle.name} without colors. The ANSI document and save destination are unchanged.`)
@@ -311,10 +317,11 @@ export function App() {
     if (event.ctrlKey || event.metaKey) {
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault()
-        if (event.key === 'ArrowLeft') setFg(value => (value + ANSI_COLORS.length - 1) % ANSI_COLORS.length)
-        if (event.key === 'ArrowRight') setFg(value => (value + 1) % ANSI_COLORS.length)
-        if (event.key === 'ArrowUp') setBg(value => (value + BACKGROUND_COLORS.length - 1) % BACKGROUND_COLORS.length)
-        if (event.key === 'ArrowDown') setBg(value => (value + 1) % BACKGROUND_COLORS.length)
+        const cycle = (value: number, count: number, delta: number) => value < count ? (value + count + delta) % count : delta > 0 ? 0 : count - 1
+        if (event.key === 'ArrowLeft') setFg(value => cycle(value, ANSI_COLORS.length, -1))
+        if (event.key === 'ArrowRight') setFg(value => cycle(value, ANSI_COLORS.length, 1))
+        if (event.key === 'ArrowUp') setBg(value => cycle(value, tundra ? 16 : BACKGROUND_COLORS.length, -1))
+        if (event.key === 'ArrowDown') setBg(value => cycle(value, tundra ? 16 : BACKGROUND_COLORS.length, 1))
         return
       }
       const key = event.key.toLowerCase()
@@ -324,7 +331,7 @@ export function App() {
       if (key === 'c') copy()
       if (key === 'x') cut()
       if (key === 'v') paste()
-      if (key === 'n') newFile()
+      if (key === 'n') newFile(editor.format)
       if (key === 'a') { setAnchor({ x: 0, y: 0 }); setSelectionEnd({ x: WIDTH - 1, y: editor.lastRow }); setTool('select') }
       return
     }
@@ -382,13 +389,13 @@ export function App() {
       if (tool === 'eyedropper') {
         const cell = editor.cell(next)
         setFg(cell.fg); setBg(cell.bg)
-        setMessage(`Picked foreground ${COLOR_NAMES[cell.fg]} and background ${COLOR_NAMES[cell.bg]}. Brush glyph unchanged.`)
+        setMessage(`Picked foreground ${colorName(cell.fg)} and background ${colorName(cell.bg)}. Brush glyph unchanged.`)
       } else {
         try {
-          const cells = bucketFill(editor.cells, next, fillMode, fg)
+          const cells = bucketFill(editor.cells, next, fillMode, fg, editor.format)
           for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
           editor.commit(); refresh()
-          setMessage(`Filled ${cells.size} connected cells with ${COLOR_NAMES[fg]}. Undo removes the entire fill.`)
+          setMessage(`Filled ${cells.size} connected cells with ${colorName(fg)}. Undo removes the entire fill.`)
         } catch (cause) { report(cause) }
       }
     } else if (tool === 'move') {
@@ -421,7 +428,7 @@ export function App() {
         const drag = gradientDrag.current
         if (!drag) return
         drag.end = next
-        drag.cells = rasterizeGradient(drag.region, drag.kind, drag.start, drag.end, drag)
+        drag.cells = rasterizeGradient(drag.region, drag.kind, drag.start, drag.end, drag, editor.format)
         setCursor(next)
         setGradientPreview(drag.cells)
         setGradientLine({ start: drag.start, end: drag.end })
@@ -517,7 +524,9 @@ export function App() {
       }
     }}>
       <details open={openMenu === 'File'}><summary ref={fileHeading} onMouseEnter={() => hoverMenu('File')} onClick={event => toggleMenu(event, 'File')}>File</summary><div className="menu-popup" onClick={closeMenu}>
-        <button onClick={newFile} disabled={saving || opening}>New <kbd>Ctrl N</kbd></button>
+        <button onClick={() => newFile(editor.format)} disabled={saving || opening}>New <kbd>Ctrl N</kbd></button>
+        {tundra && <button onClick={() => newFile('ansi')} disabled={saving || opening}>New ANSI…</button>}
+        <button onClick={() => newFile('tundra')} disabled={saving || opening}>New TundraDraw…</button>
         <button onClick={() => void openFile()} disabled={saving || opening}>Open… <kbd>Ctrl O</kbd></button>
         <button onClick={() => void save(false)} disabled={saving || opening}>Save <kbd>Ctrl S</kbd></button>
         <button onClick={() => void save(true)} disabled={saving || opening}>Save As… <kbd>Ctrl Shift S</kbd></button>
@@ -539,7 +548,7 @@ export function App() {
       </div></details>
       <details open={openMenu === 'Window'}><summary ref={windowHeading} onMouseEnter={() => hoverMenu('Window')} onClick={event => toggleMenu(event, 'Window')}>Window</summary><div className="menu-popup" onClick={closeMenu}>
         <button onClick={() => setShowPreview(value => !value)}>{showPreview ? 'Hide' : 'Show'} VGA Preview</button>
-        <button disabled={saving || opening} onClick={() => {
+        <button disabled={saving || opening || tundra} title={tundra ? 'Ansimation supports classic ANSI documents only.' : undefined} onClick={() => {
           try { setAnsimation({ source: captureFrame(editor.cells, top), top }) }
           catch (cause) { report(cause) }
         }}>Ansimation (experimental)…</button>
@@ -603,13 +612,13 @@ export function App() {
         <pre aria-label="Full CC BY-SA 4.0 license">{fontLicense}</pre>
       </div>
     </dialog>
-    {showSauce && <SauceDialog sauce={editor.sauce} rows={editor.lastRow + 1}
+    {showSauce && <SauceDialog sauce={editor.sauce} rows={editor.lastRow + 1} format={editor.format}
       onApply={sauce => {
         const version = editor.version
         editor.setSauce(sauce); refresh()
         setMessage(editor.version === version ? 'SAUCE unchanged.' : sauce
-          ? 'SAUCE metadata updated. Save the ANSI document to write it.'
-          : 'SAUCE metadata removed. Save the ANSI document to write the change.')
+          ? 'SAUCE metadata updated. Save the document to write it.'
+          : 'SAUCE metadata removed. Save the document to write the change.')
       }}
       onClose={() => { setShowSauce(false); fileHeading.current?.focus() }} />}
     <div className="toolbar">
@@ -700,7 +709,7 @@ export function App() {
     </div>
     <main className="workspace">
       <section className="editor-panel" aria-label="Screen editor">
-        <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>80 × ∞ <span className="muted">/ ANSI</span></span></div>
+        <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>80 × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : 'ANSI'}</span></span></div>
         <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={cellSize} font={font}
           primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move'} overlay={movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
@@ -733,7 +742,7 @@ export function App() {
         </details>
       </section>
       <aside className="sidebar">
-        <AgentPanel key={`agents-${agentDocument}`} onCommand={(documentId, command) => {
+        {!tundra && <AgentPanel key={`agents-${agentDocument}`} onCommand={(documentId, command) => {
           if (lastPoint.current || primitiveDrag.current || gradientDrag.current || moveDrag.current) return { ok: false, error: 'A pointer stroke is in progress. Try again after the user finishes drawing.' }
           const result = executeAgentCommand(editor, documentId, revisionCounter.current, command)
           if (result.ok && command.type === 'draw') {
@@ -741,12 +750,14 @@ export function App() {
             setMessage(`Agent drew ${command.input.cells.length} cells. Undo is available.`)
           }
           return result
-        }} />
-        <section className="panel color-panel">
+        }} />}
+        {tundra && <p className="color-note">Agent access and Ansimation support classic ANSI documents only.</p>}
+        {tundra ? <TundraColors key={`colors-${agentDocument}`} fg={fg} bg={bg} code={code} font={font}
+          cells={editor.cells} onFg={setFg} onBg={setBg} onError={report} /> : <section className="panel color-panel">
           <div className="panel-heading"><h2>ANSI colors</h2><span className="badge">16 FG / 8 BG</span></div>
           <div className="ink-preview">
-            <div className="sample-cell" style={{ color: ANSI_COLORS[fg], backgroundColor: ANSI_COLORS[bg] }}>
-              <ShadeGlyph code={code} color={ANSI_COLORS[fg]} font={font} />
+            <div className="sample-cell" style={{ color: colorCss(fg), backgroundColor: colorCss(bg) }}>
+              <ShadeGlyph code={code} color={colorCss(fg)} font={font} />
             </div>
             <div><strong>CP437 {code}</strong><span>FG {fg} · BG {bg}</span></div>
             <button title="Swap colors (bright foreground becomes its base background color)" aria-label="Swap foreground and background" onClick={() => {
@@ -766,7 +777,7 @@ export function App() {
             </div>
           })}
           <p className="color-note">Classic BBS colors: 16 foregrounds, 8 backgrounds. Bright backgrounds and blink are not used.</p>
-        </section>
+        </section>}
         {showPreview && <VgaPreview key={`preview-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} font={font}
           selection={selection} overlay={movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
           onEnd={(next, moved) => { if (!moved) clearSelection(); move(next) }} />}
@@ -784,11 +795,13 @@ export function App() {
       setAnsimation(undefined)
       windowHeading.current?.focus()
     }} />}
-    {error && <div role="alert" className="error-banner"><strong>Something needs attention:</strong> {error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
-    <footer className="status-bar">
-      <span className="cursor-position" aria-label="Cursor position">COL <strong>{String(cursor.x + 1).padStart(2, '0')}</strong> ROW <strong>{String(cursor.y + 1).padStart(2, '0')}</strong></span>
-      <span className="status-message" role="status">{message}</span>
-      <span>{selection ? `${selection.right - selection.left + 1} × ${selection.bottom - selection.top + 1} selected` : `${tool.toUpperCase()} MODE`}</span>
-    </footer>
+    <div className="status-area">
+      {error && <div role="alert" className="error-banner"><strong>Something needs attention:</strong> {error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
+      <footer className="status-bar">
+        <span className="cursor-position" aria-label="Cursor position">COL <strong>{String(cursor.x + 1).padStart(2, '0')}</strong> ROW <strong>{String(cursor.y + 1).padStart(2, '0')}</strong></span>
+        <span className="status-message" role="status">{message}</span>
+        <span>{selection ? `${selection.right - selection.left + 1} × ${selection.bottom - selection.top + 1} selected` : `${tool.toUpperCase()} MODE`}</span>
+      </footer>
+    </div>
   </div>
 }

@@ -465,6 +465,23 @@ placement, other canvas shortcuts and wheel scrolling pause.
 
 ### Open an existing file
 
+For RGB art, choose **File > New TundraDraw…**, or Open a `.tnd` file.
+TundraDraw uses **24-bit RGB** foregrounds and backgrounds with the same
+80-column CP437 drawing tools. Its sidebar has RGB pickers, 16 color presets
+for each ink, and a compact swatch grid. **User Defined** contains optional named
+swatches (Save FG/BG swatch); **Currently Used** follows the current drawing
+and undo/redo, with 64 colors per page. Hover, keyboard-focus, or click a swatch
+to see its name and FG/BG buttons. User-defined swatches also offer Remove.
+Use arrow keys to switch the tabs, Tab to reach swatches/actions, and Escape to
+close a swatch's actions.
+Up to 64 named swatches stay in memory only; New/Open/reload clears them and
+they are not stored in `.tnd`. Normal Save/Save As writes TundraDraw bytes,
+including optional SAUCE metadata. Ctrl+arrows cycle presets.
+Agent access and Ansimation remain ANSI-only.
+New/Ctrl+N retains the format; **New ANSI…** returns to classic mode without
+converting existing artwork. See [TundraDraw compatibility](../README.md#tundradraw-24-bit-rgb)
+for supported records and the format's 32-bit row boundary.
+
 Choose **File > Open** and select a local `.ans` file. Opening warns before
 replacing unsaved art. Cancellation or an invalid file leaves the current
 document intact; long reads can be canceled.
@@ -507,7 +524,7 @@ ASCII and animation copies do not include SAUCE metadata.
 | Browser / mode | What Save does |
 | --- | --- |
 | Standalone Chrome/Edge with native picker support | First Save asks for a destination; later Save writes to the same authorized file. Save As chooses a new destination. |
-| Download mode, including the VS Code integrated browser | Requests an `.ans` download (or `.asc` for Save As ASCII). Your browser controls its destination and whether to ask where to save. |
+| Download mode, including the VS Code integrated browser | Requests an `.ans` or `.tnd` download for the current document format (or `.asc` for Save As ASCII). Your browser controls its destination and whether to ask where to save. |
 
 If opened with a native picker, **Save** targets that file, subject to write
 permission. File-input opening is read-only: Save asks for a destination where
@@ -609,6 +626,8 @@ be verified by the editor.
 | Controls or columns are off-screen | Scroll horizontally inside the editor or scroll the page; try a smaller cell size in Settings. |
 
 Read the status bar and any **Something needs attention** message for details.
+Error messages stay pinned immediately above the status footer, visible without
+scrolling the page. Use **Dismiss error** to close the message.
 Canceling an open or save does not recover art lost from a previous page session.
 No configured row cap does not mean infinite resources: memory, undo history,
 export time, disk space, and representable coordinate precision still matter.

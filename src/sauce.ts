@@ -1,4 +1,5 @@
 import { CP437, characterCode } from './ansi'
+import type { DocumentFormat } from './colors'
 
 export interface SauceMetadata {
   readonly title: string
@@ -36,7 +37,7 @@ function decode(bytes: Uint8Array): string {
   return Array.from(bytes.subarray(0, end), byte => byte < 32 ? controlGlyphs[byte] : CP437[byte]).join('')
 }
 
-export function validateSauce(sauce: SauceMetadata): void {
+export function validateSauce(sauce: SauceMetadata, format: DocumentFormat = 'ansi'): void {
   encode(sauce.title, 35, 'Title')
   encode(sauce.author, 20, 'Author')
   encode(sauce.group, 20, 'Group')
@@ -51,7 +52,10 @@ export function validateSauce(sauce: SauceMetadata): void {
   }
   if (sauce.comments.length > 255) throw new Error('SAUCE supports at most 255 comment lines.')
   sauce.comments.forEach(line => encode(line, 64, 'Comment line'))
-  if (!Number.isInteger(sauce.flags) || sauce.flags < 0 || sauce.flags > 255 || (sauce.flags & 1)) {
+  if (!Number.isInteger(sauce.flags) || sauce.flags < 0 || sauce.flags > 255) {
+    throw new Error('SAUCE flags must fit an unsigned 8-bit value.')
+  }
+  if (format === 'ansi' && (sauce.flags & 1)) {
     throw new Error('SAUCE iCE colors are not supported; flags must be a byte with iCE colors disabled.')
   }
   for (const value of [sauce.tinfo3, sauce.tinfo4]) {
@@ -69,18 +73,18 @@ export function sameSauce(a: SauceMetadata | undefined, b: SauceMetadata | undef
     a.tinfo4 === b.tinfo4 && a.comments.length === b.comments.length && a.comments.every((line, index) => line === b.comments[index])
 }
 
-export async function readSauce(file: Blob): Promise<{ content: Blob; sauce?: SauceMetadata }> {
+export async function readSauce(file: Blob, format: DocumentFormat = 'ansi'): Promise<{ content: Blob; sauce?: SauceMetadata }> {
   if (file.size < 128) return { content: file }
   const record = new Uint8Array(await file.slice(file.size - 128).arrayBuffer())
   if (String.fromCharCode(...record.subarray(0, 5)) !== 'SAUCE') return { content: file }
   if (record[5] !== 48 || record[6] !== 48) throw new Error('Unsupported SAUCE version; only SAUCE00 is supported.')
-  if (record[94] !== 1 || (record[95] !== 0 && record[95] !== 1)) {
-    throw new Error('Unsupported SAUCE file type; only static ASCII and ANSI art are supported.')
+  if (record[94] !== 1 || (format === 'tundra' ? record[95] !== 8 : record[95] !== 0 && record[95] !== 1)) {
+    throw new Error('Unsupported SAUCE file type for this document format.')
   }
   const view = new DataView(record.buffer)
   const width = view.getUint16(96, true)
   if (width !== 0 && width !== 80) throw new Error('Only 80-column SAUCE art is supported.')
-  if (record[105] & 1) throw new Error('SAUCE iCE colors are not supported; backgrounds must remain in the classic eight-color range.')
+  if (format === 'ansi' && (record[105] & 1)) throw new Error('SAUCE iCE colors are not supported; backgrounds must remain in the classic eight-color range.')
   let end = file.size - 128
   const comments: string[] = []
   if (record[104]) {
@@ -102,9 +106,9 @@ export async function readSauce(file: Blob): Promise<{ content: Blob; sauce?: Sa
 }
 
 export function* withSauce(
-  source: Iterable<Uint8Array<ArrayBuffer>>, sauce: SauceMetadata, height: number,
+  source: Iterable<Uint8Array<ArrayBuffer>>, sauce: SauceMetadata, height: number, format: DocumentFormat = 'ansi',
 ): Generator<Uint8Array<ArrayBuffer>> {
-  validateSauce(sauce)
+  validateSauce(sauce, format)
   let size = 0
   for (const chunk of source) {
     size += chunk.length
@@ -127,7 +131,7 @@ export function* withSauce(
   const view = new DataView(record.buffer)
   view.setUint32(90, size, true)
   record[94] = 1
-  record[95] = 1
+  record[95] = format === 'tundra' ? 8 : 1
   view.setUint16(96, 80, true)
   view.setUint16(98, height <= 65535 ? height : 0, true)
   view.setUint16(100, sauce.tinfo3, true)

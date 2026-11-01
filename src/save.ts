@@ -1,6 +1,7 @@
 import { ansiChunks, asciiChunks } from './export'
 import type { Cell } from './model'
 import type { SauceMetadata } from './sauce'
+import { tundraChunks } from './tundra'
 
 export interface AnsiFileHandle {
   name: string
@@ -22,15 +23,15 @@ export function supportsNativeFileAccess(): boolean {
 export function hasNativeSave(): boolean {
   return supportsNativeFileAccess() && typeof (window as PickerWindow).showSaveFilePicker === 'function'
 }
-export async function chooseFile(name: string, format: 'ansi' | 'ascii' = 'ansi'): Promise<AnsiFileHandle | undefined> {
+export async function chooseFile(name: string, format: 'ansi' | 'ascii' | 'tundra' = 'ansi'): Promise<AnsiFileHandle | undefined> {
   if (!hasNativeSave()) return undefined
   const picker = (window as PickerWindow).showSaveFilePicker
   if (!picker) return undefined
   return picker.call(window, {
     suggestedName: name,
     types: [{
-      description: format === 'ascii' ? 'ASCII art (CP437, no ANSI codes)' : 'ANSI art (CP437)',
-      accept: { 'application/octet-stream': [format === 'ascii' ? '.asc' : '.ans'] },
+      description: format === 'ascii' ? 'ASCII art (CP437, no ANSI codes)' : format === 'tundra' ? 'TundraDraw art (CP437, 24-bit RGB)' : 'ANSI art (CP437)',
+      accept: { 'application/octet-stream': [format === 'ascii' ? '.asc' : format === 'tundra' ? '.tnd' : '.ans'] },
     }],
   })
 }
@@ -52,6 +53,12 @@ export async function writeAscii(
   signal: AbortSignal,
 ): Promise<void> {
   await writeChunks(asciiChunks(cells), handle, name, signal)
+}
+
+export async function writeTundra(
+  cells: ReadonlyMap<string, Cell>, handle: AnsiFileHandle | undefined, name: string, signal: AbortSignal, sauce?: SauceMetadata,
+): Promise<void> {
+  await writeChunks(tundraChunks(cells, sauce), handle, name, signal)
 }
 
 export async function writeChunks(

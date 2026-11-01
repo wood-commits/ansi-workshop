@@ -4,6 +4,17 @@ import { chooseAnsiFile } from './open'
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('browser-authorized file opening', () => {
+  it('offers TundraDraw alongside ANSI only when requested', async () => {
+    const file = new File(['test'], 'screen.tnd')
+    const handle = { name: file.name, getFile: vi.fn().mockResolvedValue(file), createWritable: vi.fn() }
+    const picker = vi.fn().mockResolvedValue([handle])
+    vi.stubGlobal('showOpenFilePicker', picker)
+    expect(await chooseAnsiFile(true)).toEqual({ file, handle })
+    expect(picker).toHaveBeenCalledWith({
+      multiple: false,
+      types: [{ description: 'ANSI / TundraDraw art (CP437)', accept: { 'application/octet-stream': ['.ans', '.tnd'] } }],
+    })
+  })
   it('uses the native single-file picker and retains only its authorized handle', async () => {
     const file = new File(['A'], 'saved.ans')
     const handle = { name: file.name, getFile: vi.fn().mockResolvedValue(file), createWritable: vi.fn() }

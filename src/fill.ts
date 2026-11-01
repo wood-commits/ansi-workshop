@@ -1,4 +1,5 @@
-import { ANSI_COLORS, BLOCK_GLYPHS } from './ansi'
+import { BLOCK_GLYPHS } from './ansi'
+import { validColor, type DocumentFormat } from './colors'
 import { EMPTY, key, MAX_ROW, pointFromKey, validPoint, WIDTH, type Cell, type Point, type Rect } from './model'
 
 export type FillMode = 'shape' | 'enclosed'
@@ -66,9 +67,9 @@ function enclosedBlankSpans(cells: ReadonlyMap<string, Cell>, start: Point): Rec
   return spans
 }
 
-export function bucketFill(cells: ReadonlyMap<string, Cell>, start: Point, mode: FillMode, fg: number): ReadonlyMap<string, Cell> {
+export function bucketFill(cells: ReadonlyMap<string, Cell>, start: Point, mode: FillMode, fg: number, format: DocumentFormat = 'ansi'): ReadonlyMap<string, Cell> {
   validatePoint(start)
-  if (!Number.isInteger(fg) || fg < 0 || fg >= ANSI_COLORS.length) throw new Error('Fill requires a foreground color index from 0 to 15.')
+  if (!validColor(fg, false, format)) throw new Error('Fill requires a valid document foreground color.')
   const result = new Map<string, Cell>()
   if (mode === 'shape') {
     for (const [id, cell] of paintedRegion(cells, start)) {

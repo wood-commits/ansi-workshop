@@ -14,7 +14,10 @@ remain out of scope.
 - No configured line limit. Preserve safe-integer coordinate validation and
   explicit errors for operations outside representable coordinates.
 - Only byte values 32-255, foreground indexes 0-15, and background indexes 0-7
-  are valid cell values. Do not reintroduce bright backgrounds or blink.
+  are valid classic ANSI cell values. Explicit TundraDraw documents additionally
+  allow validated tagged 24-bit RGB inks and all 16 presets for both colors.
+  Keep ANSI import/export, animation, and agent palette limits unchanged.
+  Do not reintroduce bright ANSI backgrounds or blink.
   Never let user-controlled characters introduce terminal control sequences.
 - Use model transactions: one pointer stroke/block action is one undo step.
   Keep saved document identity correct across undo, redo, and async saving.

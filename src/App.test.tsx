@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { App } from './App'
-import { chooseFile, writeAnsi, writeAscii } from './save'
+import { chooseFile, writeAnsi, writeAscii, writeTundra } from './save'
+import { rgbColor } from './colors'
+import { readTundraDocument } from './tundra'
 import { chooseAnsiFile } from './open'
 import { readAnsi, readAnsiDocument } from './import'
 import { emptySauce } from './sauce'
@@ -14,6 +16,10 @@ import fontNotice from './assets/fonts/NOTICE.txt?raw'
 import editorLicense from '../LICENSE?raw'
 
 vi.mock('./open', () => ({ chooseAnsiFile: vi.fn() }))
+vi.mock('./tundra', async importOriginal => {
+  const actual = await importOriginal<typeof import('./tundra')>()
+  return { ...actual, readTundraDocument: vi.fn() }
+})
 vi.mock('./import', () => {
   const readAnsi = vi.fn()
   return { readAnsi, readAnsiDocument: vi.fn(async (...args) => ({ cells: await readAnsi(...args) })) }
@@ -24,6 +30,7 @@ vi.mock('./save', () => ({
   chooseFile: vi.fn(),
   writeAnsi: vi.fn(),
   writeAscii: vi.fn(),
+  writeTundra: vi.fn(),
 }))
 beforeEach(() => {
   Object.defineProperties(HTMLDialogElement.prototype, {
@@ -50,6 +57,7 @@ beforeEach(() => {
   })
   vi.mocked(writeAnsi).mockResolvedValue(undefined)
   vi.mocked(writeAscii).mockResolvedValue(undefined)
+  vi.mocked(writeTundra).mockResolvedValue(undefined)
   vi.mocked(chooseAnsiFile).mockResolvedValue({
     file: new File(['test'], 'opened.ans'),
     handle: { name: 'opened.ans', createWritable: vi.fn() },
@@ -77,6 +85,112 @@ function sauceDialog() {
   fireEvent.click(screen.getByRole('button', { name: 'SAUCE…' }))
   return screen.getByRole('dialog', { name: 'SAUCE metadata' })
 }
+describe('TundraDraw mode', () => {
+  const newTundra = () => {
+    fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New TundraDraw…' }))
+  }
+  const saveRgb = async () => {
+    fileAction('save')
+    await waitFor(() => expect(writeTundra).toHaveBeenCalled())
+    return vi.mocked(writeTundra).mock.calls.at(-1)![0]
+  }
+  it('draws with RGB via pointer and F-keys, tracks colors and keeps swatches out of history', async () => {
+    render(<App />); newTundra()
+    vi.mocked(chooseFile).mockResolvedValue({ name: 'art.tnd', createWritable: vi.fn() })
+    const fg = rgbColor('#123456'), bg = rgbColor('#abcdef')
+    fireEvent.change(screen.getByLabelText('Foreground RGB'), { target: { value: '#123456' } })
+    fireEvent.change(screen.getByLabelText('Background RGB'), { target: { value: '#abcdef' } })
+    fireEvent.change(screen.getByLabelText('Swatch name'), { target: { value: 'Ocean' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save FG swatch' }))
+    expect(screen.queryByText('untitled.tnd *')).toBeNull()
+    press('F4')
+    expect(screen.getByRole('tab', { name: 'Currently Used (2)' })).not.toBeNull()
+    expect(await saveRgb()).toEqual(new Map([['0,0', { code: 219, fg, bg }]]))
+    expect(chooseFile).toHaveBeenCalledWith('untitled.tnd', 'tundra')
+    expect(writeAnsi).not.toHaveBeenCalled()
+    press('z', { ctrlKey: true })
+    expect(screen.getByRole('tab', { name: 'Currently Used (0)' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Swatch Ocean' })).not.toBeNull()
+    press('y', { ctrlKey: true })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 75, clientY: 8 })
+    fireEvent.pointerMove(canvas(), { clientX: 91, clientY: 8 })
+    fireEvent.pointerUp(canvas())
+    const snapshot = await saveRgb()
+    for (const x of [4, 5, 6]) expect(snapshot.get(`${x},0`)).toEqual({ code: 219, fg, bg })
+    press('z', { ctrlKey: true })
+    expect(await saveRgb()).toEqual(new Map([['0,0', { code: 219, fg, bg }]]))
+  })
+
+  it('opens RGB cleanly, shows Tundra SAUCE information and gates ANSI-only controls', async () => {
+    const cells = new Map([['0,0', { code: 219, fg: rgbColor('#123456'), bg: 15 }]])
+    vi.mocked(chooseAnsiFile).mockResolvedValue({ file: new File(['test'], 'opened.tnd') })
+    vi.mocked(readTundraDocument).mockResolvedValue({ cells })
+    render(<App />); fileAction('open')
+    await screen.findByText('opened.tnd', { selector: '.document-title' })
+    expect(screen.getByLabelText('Foreground RGB')).not.toBeNull()
+    const dialog = sauceDialog()
+    expect(within(dialog).getByText(/Character \/ TundraDraw/)).not.toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    expect(screen.getByRole('button', { name: 'Ansimation (experimental)…' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByText('Window', { selector: 'summary' }))
+    expect(screen.queryByRole('button', { name: /Enable agent access/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Eyedropper' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 46, clientY: 8 })
+    fireEvent.pointerUp(canvas())
+    expect((screen.getByLabelText('Foreground RGB') as HTMLInputElement).value).toBe('#123456')
+    expect((screen.getByLabelText('Background RGB') as HTMLInputElement).value).toBe('#ffffff')
+    expect(screen.queryByText('opened.tnd *')).toBeNull()
+  })
+
+  it('preserves saved-version identity when editing during RGB save and clears swatches on New', async () => {
+    let finish: (() => void) | undefined
+    vi.mocked(writeTundra).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    vi.mocked(chooseFile).mockResolvedValue({ name: 'art.tnd', createWritable: vi.fn() })
+    render(<App />); newTundra(); press('F4')
+    fileAction('save')
+    await waitFor(() => expect(finish).toBeTypeOf('function'))
+    press('A')
+    await act(async () => finish!())
+    expect(screen.getByText('art.tnd *')).not.toBeNull()
+    press('z', { ctrlKey: true })
+    expect(screen.queryByText('art.tnd *')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Swatch name'), { target: { value: 'Saved' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save FG swatch' }))
+    press('n', { ctrlKey: true })
+    expect(screen.queryByRole('button', { name: 'Swatch Saved' })).toBeNull()
+    expect(screen.getByLabelText('Foreground RGB')).not.toBeNull()
+    fireEvent.click(screen.getByText('File', { selector: 'summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New ANSI…' }))
+    expect(screen.queryByLabelText('Foreground RGB')).toBeNull()
+    expect(screen.getByText('ANSI colors')).not.toBeNull()
+  })
+
+  it('reports malformed Tundra input without replacing the current document', async () => {
+    vi.mocked(chooseAnsiFile).mockResolvedValue({ file: new File(['bad'], 'bad.tnd') })
+    vi.mocked(readTundraDocument).mockRejectedValueOnce(new Error('Truncated Tundra record'))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(<App />); fileAction('open')
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Truncated Tundra'))
+    expect(screen.getByText('untitled.ans', { selector: '.document-title' })).not.toBeNull()
+    expect(log).toHaveBeenCalled()
+  })
+  it('edits and saves Tundra SAUCE with the legacy iCE bit without applying ANSI color restrictions', async () => {
+    const sauce = { ...emptySauce(), title: 'RGB art', flags: 1 }
+    vi.mocked(chooseAnsiFile).mockResolvedValue({ file: new File(['test'], 'opened.tnd') })
+    vi.mocked(readTundraDocument).mockResolvedValue({ cells: new Map(), sauce })
+    render(<App />); fileAction('open')
+    await screen.findByText('opened.tnd', { selector: '.document-title' })
+    const dialog = sauceDialog()
+    expect(within(dialog).getByText('1 (preserved; not used for RGB colors)')).not.toBeNull()
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Edited RGB' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    expect(screen.queryByRole('dialog', { name: 'SAUCE metadata' })).toBeNull()
+    await saveRgb()
+    expect(vi.mocked(writeTundra).mock.calls.at(-1)![4]).toMatchObject({ title: 'Edited RGB', flags: 1 })
+  })
+})
 describe('SAUCE dialog', () => {
   it('adds metadata, saves it, and undoes/redoes removal without modifying art', async () => {
     render(<App />)
@@ -1661,6 +1775,20 @@ describe('editor UI', () => {
     fileAction('save')
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Save canceled'))
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+  it('groups errors above the status footer in one pinned area and allows dismissal', () => {
+    renderClassicEditor()
+    const footer = screen.getByRole('contentinfo')
+    expect(footer.parentElement?.className).toBe('status-area')
+    expect(screen.queryByRole('alert')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Go to row'), { target: { value: '1e100' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }))
+    const alert = screen.getByRole('alert')
+    expect(alert.parentElement).toBe(footer.parentElement)
+    expect(alert.nextElementSibling).toBe(footer)
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('contentinfo')).toBe(footer)
   })
   it('asks before discarding unsaved changes and rejects invalid row input', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)

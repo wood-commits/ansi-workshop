@@ -27,6 +27,9 @@ Reloading loses all in-memory state.
 | Module | Responsibility |
 | --- | --- |
 | `src/ansi.ts` | DOS-order 16-color foreground/eight-color background palettes, CP437 display table, F-key palettes, directional glyph reflection |
+| `src/colors.ts` | Explicit ANSI/Tundra document formats, tagged RGB values, validated CSS colors |
+| `src/tundra.ts` | Bounded streaming Tundra24 parser and sparse binary export with optional SAUCE |
+| `src/TundraColors.tsx` | RGB ink pickers, named in-memory swatches and paginated current-art colors |
 | `src/model.ts` | Sparse cells, coordinates, rectangular block operations, Bresenham stroke interpolation, transaction history |
 | `src/draw.ts` | Local-coordinate half-row stroke interpolation and matching-ink half-block merging |
 | `src/primitives.ts` | Aspect-correct rotated primitive coverage, full/half-block rasterization, color-preserving sparse subtraction |
@@ -68,10 +71,19 @@ Cells are a `Map<string, Cell>` keyed by `"x,y"`. A default space with foregroun
 default and must remain stored. Cell records are copied on writes.
 An Editor constructed from imported cells validates/copies them directly into
 its clean baseline; importing does not allocate undo transactions for the file.
-Validation permits foreground indexes 0-15 and background indexes 0-7.
+ANSI validation permits foreground indexes 0-15 and background indexes 0-7.
 The picker and Ctrl+arrow cycling share those palette bounds. Swapping a bright
 foreground into the background explicitly reduces it to its base color and
 notifies the user; no bright backgrounds or blink are exported.
+
+Each Editor has an immutable document format, defaulting to ANSI. TundraDraw
+additionally accepts foreground/background indexes 0-15 and RGB values tagged
+with `0x1000000`; low RGB values cannot collide with palette indexes.
+`rgbColor` canonicalizes RGB equivalents of classic colors to their palette
+index, preserving default blank omission and color equality in existing tools.
+RGB validation is explicitly enabled only for Tundra editors and their
+fill/gradient calls. Classic ANSI export and animation still reject RGB cells.
+Paste validates all source colors before clearing any destination cells.
 
 The Editor owns a mutable map; React holds the Editor instance and synchronously
 increments a ref-backed revision counter, mirroring it into state to redraw.
@@ -135,6 +147,9 @@ borders.
 The app shell allows up to 1720 pixels, enough for the 1322-pixel 2x canvas,
 editor borders, wide-screen sidebar, gap, and workspace padding. Narrower
 windows retain horizontal scrolling inside the canvas host.
+The error banner and status footer share one bottom-sticky container, keeping
+errors immediately above the footer without requiring page scrolling. The
+container stays in document flow and follows wrapped banner/footer heights.
 In 2x mode the host reserves 825 content pixels: 25 rows at 32 pixels
 and the column ruler. ResizeObserver adds the
 measured horizontal scrollbar height to the minimum host height when necessary,
@@ -383,6 +398,34 @@ invalidate the art raster cache without changing the document.
 
 ## Export and save lifecycle
 
+TundraDraw uses the same snapshot, native writable, cancellation, download cap,
+and saved-version lifecycle. Its exporter sorts only stored cells and emits
+position records for gaps, with bounded chunks no larger than 4,115 bytes.
+The nine-byte header is version 24 followed by `TUNDRA24`. Command 1 carries
+big-endian unsigned 32-bit row then column; commands 2/4/6 carry a glyph then
+foreground/background/both colors as four-byte fields (unused high byte, R, G, B).
+Export writes the unused byte as zero; import ignores its value. Other supported
+glyphs advance with automatic 80-column wrapping. Format-unrepresentable rows
+fail explicitly, without imposing a document line cap. SAUCE uses Character
+file type 8 for TundraDraw instead of type 1 for ANSI.
+SAUCE flag bytes are preserved for TundraDraw, including bit 0; RGB fields
+already specify each ink, so the legacy ANSI iCE flag does not affect rendering.
+SAUCE read/edit/export validation is format-aware, keeping ANSI's iCE rejection.
+Both renderers resolve tagged colors through `colorCss`; IBM glyph atlases
+and Consolas shading caches each retain at most 64 colors.
+
+RGB pickers and named swatches are available only in TundraDraw mode.
+Saved swatches hold at most 64 colors/names in document-scoped component state;
+they do not modify art/history or persist in files. User Defined and Currently
+Used tabs show only one compact eight-column grid at a time. Hover/focus/click
+reveals an absolutely positioned name/FG/BG action group (plus Remove for saved
+colors), not extra document-flow rows. Tabs use roving keyboard focus and
+arrow/Home/End navigation; Escape dismisses the focused swatch actions.
+Current-art colors are deduplicated from sparse cells and paginated 64 at a time. New/Open remount
+the panel. Ctrl+arrows cycle the classic presets, with 16 backgrounds in RGB
+mode. Crossing document formats resets brush inks. AgentPanel is unmounted
+and Ansimation is disabled in Tundra mode; neither protocol is widened.
+
 1. Commit pending edits and snapshot cells plus the model's unique version.
 2. Obtain or reuse the user's browser-authorized save handle.
 3. Group sparse cells by row, sort rows, and generate bounded byte chunks.
@@ -494,6 +537,22 @@ reusing `writeChunks`, including abort failure reporting and the download cap.
 It never marks the editor saved or claims a download reached disk.
 
 ## Open lifecycle
+
+The main picker accepts `.ans` and `.tnd`; animation's picker remains ANSI-only.
+The filename extension selects the parser (case-insensitive `.tnd` for RGB).
+`TundraDecoder` retains at most a ten-byte pending record, validates the
+signature/version, positions, complete RGB fields and glyph range, and omits default
+spaces. Zero bytes advance without painting; explicit default spaces clear
+prior cells when a position is overwritten. The reader checks cancellation
+between chunks and inspects bounded SAUCE metadata before parsing. Only a
+validated Character/TundraDraw trailer is accepted, and its optional DOS EOF
+separator is handled by the decoder at a record boundary. After EOF, only
+spaces and repeated EOF markers are allowed as trailing padding; they do not
+allocate cells or extend the document. Bytes valued 26 inside color records
+are never mistaken for EOF, and the reader does not strip raw final bytes.
+Control glyphs are rejected with their byte value and offset rather than
+becoming terminal commands. A completely parsed Tundra document starts clean
+with the same replacement safeguards as ANSI.
 
 Open is available from the File menu and canvas Ctrl/Cmd+O. It is
 mutually exclusive with Save/New/another Open, but editing may continue during

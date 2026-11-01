@@ -1,4 +1,5 @@
-import { ANSI_COLORS, BACKGROUND_COLORS, BLOCK_GLYPHS } from './ansi'
+import { BLOCK_GLYPHS } from './ansi'
+import { validColor, type DocumentFormat } from './colors'
 import { MAX_ROW, pointFromKey, validPoint, type Cell, type Point } from './model'
 
 export { paintedRegion as gradientRegion } from './fill'
@@ -18,12 +19,11 @@ const BAYER = [
 ]
 
 export function rasterizeGradient(
-  region: ReadonlyMap<string, Cell>, kind: GradientKind, start: Point, end: Point, ink: Pick<Cell, 'fg' | 'bg'>,
+  region: ReadonlyMap<string, Cell>, kind: GradientKind, start: Point, end: Point, ink: Pick<Cell, 'fg' | 'bg'>, format: DocumentFormat = 'ansi',
 ): ReadonlyMap<string, Cell> {
   validatePoint(start); validatePoint(end)
-  if (!Number.isInteger(ink.fg) || ink.fg < 0 || ink.fg >= ANSI_COLORS.length ||
-      !Number.isInteger(ink.bg) || ink.bg < 0 || ink.bg >= BACKGROUND_COLORS.length) {
-    throw new Error('Gradient colors require foreground indexes 0-15 and background indexes 0-7.')
+  if (!validColor(ink.fg, false, format) || !validColor(ink.bg, true, format)) {
+    throw new Error('Gradient colors require valid document foreground and background colors.')
   }
   const cells = new Map<string, Cell>()
   const dx = end.x - start.x, dy = (end.y - start.y) * 2

@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
-import { ANSI_COLORS, BLOCK_GLYPHS, CP437 } from './ansi'
+import { BLOCK_GLYPHS, CP437 } from './ansi'
+import { colorCss } from './colors'
 import { contains, type Cell, type Editor, key, MAX_ROW, type Point, type Rect, WIDTH } from './model'
 import type { GradientLine } from './gradient'
 import { drawVgaGlyph, type CanvasFont } from './vgaFont'
@@ -37,7 +38,11 @@ export function drawGlyph(ctx: CanvasRenderingContext2D, code: number, x: number
     let colors = shadePatterns.get(ctx)
     if (!colors) { colors = new Map(); shadePatterns.set(ctx, colors) }
     let patterns = colors.get(color)
-    if (!patterns) { patterns = new Map(); colors.set(color, patterns) }
+    if (!patterns) {
+      patterns = new Map()
+      if (colors.size >= 64) colors.delete(colors.keys().next().value!)
+      colors.set(color, patterns)
+    }
     let pattern = patterns.get(code)
     if (!pattern) {
       const tile = document.createElement('canvas')
@@ -309,9 +314,9 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
       for (let x = 0; x < WIDTH; x++) {
         const cell = overlay?.get(key(x, y)) ?? editor.cell({ x, y })
         const dx = gutter + x * cellWidth, dy = row * cellHeight
-        ctx.fillStyle = ANSI_COLORS[cell.bg]
+        ctx.fillStyle = colorCss(cell.bg)
         ctx.fillRect(dx, dy, cellWidth, cellHeight)
-        ctx.fillStyle = ANSI_COLORS[cell.fg]
+        ctx.fillStyle = colorCss(cell.fg)
         drawGlyph(ctx, cell.code, dx, dy, cellWidth, cellHeight, font)
         if (selection && contains(selection, { x, y })) {
           ctx.fillStyle = '#61ddff44'

@@ -1,4 +1,5 @@
-import { ANSI_COLORS, BACKGROUND_COLORS, flipCharacter } from './ansi'
+import { flipCharacter } from './ansi'
+import { validColor, type DocumentFormat } from './colors'
 import { copySauce, sameSauce, validateSauce, type SauceMetadata } from './sauce'
 
 export const WIDTH = 80
@@ -26,11 +27,11 @@ export function contains(rect: Rect, point: Point): boolean {
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
 }
 function same(a: Cell, b: Cell): boolean { return a.code === b.code && a.fg === b.fg && a.bg === b.bg }
-export function validateCell(cell: Cell): void {
+export function validateCell(cell: Cell, format: DocumentFormat = 'ansi'): void {
   if (!Number.isInteger(cell.code) || cell.code < 32 || cell.code > 255 ||
-      !Number.isInteger(cell.fg) || cell.fg < 0 || cell.fg >= ANSI_COLORS.length ||
-      !Number.isInteger(cell.bg) || cell.bg < 0 || cell.bg >= BACKGROUND_COLORS.length) {
-    throw new Error('Invalid cell: use CP437 bytes 32-255, foreground colors 0-15, and background colors 0-7.')
+      !validColor(cell.fg, false, format) || !validColor(cell.bg, true, format)) {
+    throw new Error(format === 'tundra' ? 'Invalid Tundra cell: use CP437 bytes 32-255 and valid RGB colors.'
+      : 'Invalid cell: use CP437 bytes 32-255, foreground colors 0-15, and background colors 0-7.')
   }
 }
 
@@ -43,12 +44,12 @@ export class Editor {
   private stateId = 0
   private savedId = 0
   private metadata: SauceMetadata | undefined
-  constructor(cells?: ReadonlyMap<string, Cell>, sauce?: SauceMetadata) {
+  constructor(cells?: ReadonlyMap<string, Cell>, sauce?: SauceMetadata, readonly format: DocumentFormat = 'ansi') {
     this.metadata = copySauce(sauce)
     for (const [id, cell] of cells ?? []) {
       const point = pointFromKey(id)
       if (!validPoint(point)) throw new Error('Document coordinates must be safe, nonnegative integers within 80 columns.')
-      validateCell(cell)
+      validateCell(cell, this.format)
       this.write(point, cell)
     }
   }
@@ -71,7 +72,7 @@ export class Editor {
   }
   paint(point: Point, cell: Cell): void {
     if (!validPoint(point)) throw new Error('Cursor coordinates must be safe, nonnegative integers within 80 columns.')
-    validateCell(cell)
+    validateCell(cell, this.format)
     const before = this.cell(point)
     if (same(before, cell)) return
     const id = key(point.x, point.y)
@@ -89,7 +90,7 @@ export class Editor {
     this.redoStack = []
   }
   setSauce(sauce: SauceMetadata | undefined): void {
-    if (sauce) validateSauce(sauce)
+    if (sauce) validateSauce(sauce, this.format)
     this.commit()
     if (sameSauce(this.metadata, sauce)) return
     const after = copySauce(sauce)
@@ -134,6 +135,7 @@ export class Editor {
   paste(block: Block, origin: Point): void {
     if (!validPoint(origin) || !Number.isSafeInteger(origin.y + block.height - 1) ||
         origin.y + block.height - 1 >= Number.MAX_SAFE_INTEGER) throw new Error('The pasted block exceeds safe coordinate precision.')
+    for (const cell of block.cells.values()) validateCell(cell, this.format)
     this.clear({ left: origin.x, top: origin.y, right: Math.min(WIDTH - 1, origin.x + block.width - 1), bottom: origin.y + block.height - 1 })
     for (const [id, cell] of block.cells) {
       const point = pointFromKey(id)

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle } from './save'
+import { chooseFile, hasNativeSave, writeAnsi, writeAscii, writeTundra, type AnsiFileHandle } from './save'
+import { rgbColor } from './colors'
 import { emptySauce } from './sauce'
 
 function file() {
@@ -9,6 +10,25 @@ function file() {
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 describe('native save capability', () => {
+  it('offers the TundraDraw extension and streams RGB through the authorized lifecycle', async () => {
+    const { handle, stream } = file()
+    const picker = vi.fn().mockResolvedValue(handle)
+    vi.stubGlobal('showSaveFilePicker', picker)
+    await chooseFile('screen.tnd', 'tundra')
+    expect(picker).toHaveBeenCalledWith({
+      suggestedName: 'screen.tnd',
+      types: [{ description: 'TundraDraw art (CP437, 24-bit RGB)', accept: { 'application/octet-stream': ['.tnd'] } }],
+    })
+    const cells = new Map([['0,0', { code: 219, fg: rgbColor('#123456'), bg: 0 }]])
+    await writeTundra(cells, handle, 'screen.tnd', new AbortController().signal)
+    expect(stream.write.mock.calls.flatMap(([chunk]) => [...chunk])).toEqual([24, 84, 85, 78, 68, 82, 65, 50, 52, 2, 219, 0, 18, 52, 86])
+    expect(stream.close).toHaveBeenCalledOnce()
+    stream.close.mockClear()
+    stream.write.mockRejectedValueOnce(new Error('Disk full'))
+    await expect(writeTundra(cells, handle, 'screen.tnd', new AbortController().signal)).rejects.toThrow('Disk full')
+    expect(stream.abort).toHaveBeenCalledOnce()
+    expect(stream.close).not.toHaveBeenCalled()
+  })
   it('offers the ASCII extension for an ASCII copy', async () => {
     const { handle } = file()
     const picker = vi.fn().mockResolvedValue(handle)

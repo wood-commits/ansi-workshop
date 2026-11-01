@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { emptySauce, validateSauce, type SauceMetadata } from './sauce'
+import type { DocumentFormat } from './colors'
 
-export function SauceDialog({ sauce, rows, onApply, onClose }: {
-  sauce?: SauceMetadata; rows: number; onApply(sauce: SauceMetadata | undefined): void; onClose(): void
+export function SauceDialog({ sauce, rows, format = 'ansi', onApply, onClose }: {
+  sauce?: SauceMetadata; rows: number; format?: DocumentFormat; onApply(sauce: SauceMetadata | undefined): void; onClose(): void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const [draft, setDraft] = useState(() => sauce ?? emptySauce())
@@ -19,7 +20,7 @@ export function SauceDialog({ sauce, rows, onApply, onClose }: {
         ...draft,
         comments: comments === draft.comments.join('\n') ? draft.comments : comments ? comments.split('\n') : [],
       }
-      if (next) validateSauce(next)
+      if (next) validateSauce(next, format)
       onApply(next)
       close()
     } catch (cause) {
@@ -38,7 +39,7 @@ export function SauceDialog({ sauce, rows, onApply, onClose }: {
     </div>
     <form className="info-dialog-content" onSubmit={event => { event.preventDefault(); apply() }}>
       <p>{sauce ? 'This document has SAUCE00 metadata.' : 'This document has no SAUCE metadata. Apply adds a SAUCE00 record.'}
-        {' '}Changes take effect only on Apply; save the ANSI document to write them.</p>
+        {' '}Changes take effect only on Apply; save the document to write them.</p>
       <div className="sauce-fields">
         <label>Title <span className="muted">35 bytes</span>
           <input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} />
@@ -59,13 +60,13 @@ export function SauceDialog({ sauce, rows, onApply, onClose }: {
       <p>Use CP437 characters. Unsupported characters and overlong fields are reported, never silently truncated.</p>
       <h3>Format information</h3>
       <dl className="sauce-format">
-        <dt>ANSI save format</dt><dd>SAUCE00 · Character / ANSI · 80 columns</dd>
+        <dt>Save format</dt><dd>SAUCE00 · Character / {format === 'tundra' ? 'TundraDraw' : 'ANSI'} · 80 columns</dd>
         <dt>Height on save</dt><dd>{rows > 65535 ? 'Unspecified (height exceeds the 16-bit field)' : `${rows} ${rows === 1 ? 'row' : 'rows'}`}</dd>
         <dt>Font hint</dt><dd>{draft.fontName || 'Unspecified'}</dd>
-        <dt>Flags</dt><dd>{draft.flags} (iCE colors off)</dd>
+        <dt>Flags</dt><dd>{draft.flags} {format === 'tundra' ? '(preserved; not used for RGB colors)' : '(iCE colors off)'}</dd>
         <dt>Additional type information</dt><dd>{draft.tinfo3} / {draft.tinfo4}</dd>
       </dl>
-      <p>Font and display hints are preserved, not applied to the canvas. File size and dimensions are recomputed on ANSI save.
+      <p>Font and display hints are preserved, not applied to the canvas. File size and dimensions are recomputed on save.
         {' '}ASCII and animation copies do not include SAUCE.</p>
       {error && <p role="alert">{error}</p>}
       <div className="ansimation-actions">

@@ -15,12 +15,13 @@ type OpenPickerWindow = Window & {
   showOpenFilePicker?: (options: OpenPickerOptions) => Promise<AnsiOpenHandle[]>
 }
 
-export async function chooseAnsiFile(): Promise<OpenedAnsiFile> {
+export async function chooseAnsiFile(includeTundra = false): Promise<OpenedAnsiFile> {
   const picker = (window as OpenPickerWindow).showOpenFilePicker
   if (supportsNativeFileAccess() && picker) {
     const [handle] = await picker.call(window, {
       multiple: false,
-      types: [{ description: 'ANSI art (CP437)', accept: { 'application/octet-stream': ['.ans'] } }],
+      types: [{ description: includeTundra ? 'ANSI / TundraDraw art (CP437)' : 'ANSI art (CP437)',
+        accept: { 'application/octet-stream': includeTundra ? ['.ans', '.tnd'] : ['.ans'] } }],
     })
     if (!handle) throw new Error('No ANSI file was returned by the browser picker.')
     return { file: await handle.getFile(), handle }
@@ -28,7 +29,7 @@ export async function chooseAnsiFile(): Promise<OpenedAnsiFile> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.ans'
+    input.accept = includeTundra ? '.ans,.tnd' : '.ans'
     input.hidden = true
     const cleanup = () => {
       input.removeEventListener('change', finish)

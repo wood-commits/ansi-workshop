@@ -284,6 +284,54 @@ Ctrl+A (select through the last nondefault row), and Escape (deselect/draw).
 Cmd can substitute for Ctrl on macOS. Shortcuts intentionally do not intercept
 typing in the row field or color/palette controls.
 
+## TundraDraw (24-bit RGB)
+
+Choose **File > New TundraDraw…** to start an 80-column RGB document, or
+**File > Open** to select a `.tnd` file. TundraDraw uses binary CP437 and
+24-bit RGB foreground/background colors, not 16-bit color or ANSI truecolor
+escape sequences. Classic `.ans` documents retain 16 foregrounds, eight
+backgrounds, and their existing ANSI compatibility restrictions.
+
+The TundraDraw sidebar offers RGB pickers, all 16 classic color presets for
+both inks, and a compact swatch grid with **User Defined** and **Currently Used**
+tabs. User Defined holds up to 64 saved colors with optional names; saving a
+swatch again replaces its name. Hover, focus, or click a swatch to see its
+name and FG/BG actions; user-defined swatches also offer Remove. Tab moves
+through swatches/actions, arrow keys switch collection tabs, and Escape
+closes a swatch's actions. Currently Used derives colors from the current art,
+including colored spaces and undo/redo, displaying 64 at a time.
+Swatches are session-memory-only:
+New, Open, or reload clears them, and `.tnd` does not store swatch names.
+Ctrl+arrows cycle the classic presets; swapping RGB inks does not reduce colors.
+
+Draw, half blocks, keyboard editing, block operations, fill, gradients,
+eyedropper, and both canvas fonts/previews support RGB colors.
+Save/Save As writes `.tnd` using the same authorized native-file or explicit
+download lifecycle as ANSI. Save As ASCII remains a separate colorless copy.
+SAUCE00 Character/TundraDraw metadata is preserved and editable. SAUCE flag
+bits (including the legacy iCE bit) are retained but do not control RGB colors.
+Agent access and experimental Ansimation are currently ANSI-only.
+
+New and Ctrl+N retain the current document format. **New ANSI…** in a
+TundraDraw document returns to classic mode; opening `.ans` also does so.
+These commands start/replace documents, not lossy color conversions.
+Pasting an RGB block into ANSI fails visibly, before changing the destination,
+if its colors cannot be represented by the classic palette.
+
+Tundra24 records use the version/signature `24` + `TUNDRA24`, big-endian
+32-bit row/column positions and four-byte color fields whose low three bytes
+encode RGB. The unused high byte is ignored on import and written as zero on
+export. Sparse row
+gaps use position records, not dense blank output. The editor still has no
+configured line limit, but `.tnd` positions must fit an unsigned 32-bit row;
+export outside that format boundary fails explicitly. Only glyph bytes 32-255
+and zero-byte skips are supported. A record-boundary DOS EOF byte ends the art;
+only padding spaces and repeated EOF bytes are accepted afterward, not painted
+as extra rows. EOF-valued bytes inside RGB records remain color data.
+Malformed/truncated records, control glyphs,
+non-80-column positions and unsupported SAUCE types
+fail without replacing the current document. Classic ANSI still rejects iCE flags.
+
 ## Open saved ANSI files
 
 Choose **File > Open**, or press **Ctrl+O** with

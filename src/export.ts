@@ -1,9 +1,10 @@
-import { EMPTY, pointFromKey, type Cell } from './model'
+import { EMPTY, pointFromKey, validateCell, type Cell } from './model'
 import { withSauce, type SauceMetadata } from './sauce'
 
 const escape = 27
 const ansiOrder = [0, 4, 2, 6, 1, 5, 3, 7]
 export function sgr(cell: Cell, classicBright = false): number[] {
+  validateCell(cell)
   const fg = (cell.fg < 8 || classicBright ? 30 : 90) + ansiOrder[cell.fg % 8]
   const bg = 40 + ansiOrder[cell.bg]
   const attributes = classicBright ? `0;${cell.fg >= 8 ? '1;' : ''}` : ''
@@ -26,6 +27,7 @@ export function* asciiChunks(cells: ReadonlyMap<string, Cell>): Generator<Uint8A
 function* artChunks(cells: ReadonlyMap<string, Cell>, colors: boolean): Generator<Uint8Array<ArrayBuffer>> {
   const rows = new Map<number, Map<number, Cell>>()
   for (const [id, cell] of cells) {
+    validateCell(cell, colors ? 'ansi' : 'tundra')
     const { x, y } = pointFromKey(id)
     let row = rows.get(y)
     if (!row) { row = new Map(); rows.set(y, row) }

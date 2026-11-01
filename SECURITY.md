@@ -22,8 +22,11 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
   are surfaced; no broad success-shaped fallback hides failed native writes.
   File-input opening grants read access only and never preserves a prior save
   handle for the newly opened document. File bytes stay in the browser.
-- Cells accept CP437 bytes 32-255, foreground colors 0-15, and background
-  colors 0-7, never raw control bytes. Bright backgrounds and blink are excluded.
+- Classic ANSI cells accept CP437 bytes 32-255, foreground colors 0-15, and
+  background colors 0-7, never raw control bytes. Bright backgrounds and blink
+  are excluded from ANSI. Explicit TundraDraw documents additionally accept
+  validated 24-bit RGB inks for both colors; this does not widen ANSI parsing,
+  ANSI export, animation or agent schemas.
   Only the exporter emits validated ANSI control sequences. Text is rendered
   through React/canvas, never as HTML. Imported files use a streaming CP437
   parser with a bounded CSI buffer and explicit safe-coordinate validation.
@@ -83,6 +86,25 @@ terminal controls. No timing scripts, player executable, new server route,
 network service, persistence, or additional dependencies are introduced.
 The browser preview simulates byte transmission speed, not an unrestricted
 terminal. ANSI playback compatibility/timing is not a security guarantee.
+
+TundraDraw input is binary CP437, not executable ANSI truecolor commands.
+Its parser holds at most ten bytes per pending record and validates the
+version/signature, complete four-byte RGB fields, 80-column positions and glyph
+range. The unused high color byte is ignored, not interpreted as alpha or
+terminal data; export normalizes it to zero.
+Zero-byte skips do not allocate cells; 32-bit cursor positions never allocate
+dense rows. Control glyphs, malformed records and unsupported metadata fail
+visibly before replacement. DOS EOF is interpreted only at record boundaries;
+only spaces and repeated EOF bytes may follow as padding. EOF-valued color
+bytes remain color data, and other content after EOF fails explicitly.
+Optional SAUCE metadata uses the existing bounded
+reader with the explicit TundraDraw file type. Its flag byte is preserved,
+including the legacy iCE bit, without changing RGB rendering or weakening
+classic ANSI's iCE rejection. RGB exports remain streamed and
+abortable through browser-authorized handles only. Swatches are rendered through
+React and remain in memory, with 64 saved entries and 64 used colors per page.
+No new dependencies, persistence, network endpoints or file capabilities are
+introduced. ANSI-only agents and Ansimation are unavailable in Tundra mode.
 
 ## Static hosting
 

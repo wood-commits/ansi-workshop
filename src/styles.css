@@ -150,7 +150,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .quick-help h2 { margin-bottom: 12px; color: #b6c1d1; }
 .quick-help p { color: var(--muted); font-size: 10px; line-height: 1.7; margin-top: 7px; }
 .quick-help kbd { display: inline-block; min-width: 105px; font-size: 10px; color: #c5d0df; }
-.status-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 20px; border-top: 1px solid #344033; background: #151f19; color: #a9bd9d; min-height: 36px; padding: 8px 27px; font: 10px Consolas, monospace; z-index: 2; }
+.status-area { position: sticky; bottom: 0; z-index: 2; }
+.status-bar { display: flex; align-items: center; gap: 20px; border-top: 1px solid #344033; background: #151f19; color: #a9bd9d; min-height: 36px; padding: 8px 27px; font: 10px Consolas, monospace; }
 .cursor-position { color: #8f9e89; white-space: nowrap; }
 .cursor-position strong { color: #e1efda; margin: 0 9px 0 4px; font-weight: 400; }
 .status-message { flex: 1; }
@@ -186,3 +187,19 @@ input[type="checkbox"] { accent-color: var(--accent); }
   .status-bar { padding: 8px 15px; gap: 10px; }
   .status-message { font-size: 9px; }
 }
+.rgb-picker { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.rgb-picker input[type="color"] { width: 42px; height: 30px; padding: 2px; }
+.rgb-picker input:not([type="color"]) { min-width: 0; flex: 1; }
+.swatch-tabs { display: flex; gap: 5px; margin: 8px 0; }
+.swatch-tabs > button { flex: 1; padding: 6px 4px; font-size: 11px; }
+.swatch-tabs > button[aria-selected="true"] { border-color: #8fb861; color: #c4ee86; }
+.swatch-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+.swatch-item { position: relative; }
+.swatch-color { display: block; width: 100%; height: 28px; padding: 0; border: 1px solid #657084; border-radius: 3px; }
+.swatch-color[aria-expanded="true"] { outline: 2px solid #dfe9f8; outline-offset: 1px; }
+.swatch-actions { position: absolute; left: 0; bottom: 100%; z-index: 20; width: 160px; padding: 9px; background: #1a2330; border: 1px solid #657084; border-radius: 4px; box-shadow: 0 4px 12px #0008; }
+.swatch-item:nth-child(8n+5) .swatch-actions, .swatch-item:nth-child(8n+6) .swatch-actions,
+.swatch-item:nth-child(8n+7) .swatch-actions, .swatch-item:nth-child(8n+8) .swatch-actions { left: auto; right: 0; }
+.swatch-actions > strong, .swatch-actions > span { display: block; overflow-wrap: anywhere; font-size: 11px; }
+.swatch-actions > div { display: flex; gap: 4px; margin-top: 6px; }
+.swatch-actions button { padding: 4px 6px; font-size: 11px; }
