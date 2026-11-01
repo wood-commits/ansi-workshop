@@ -106,6 +106,14 @@ React and remain in memory, with 64 saved entries and 64 used colors per page.
 No new dependencies, persistence, network endpoints or file capabilities are
 introduced. ANSI-only agents and Ansimation are unavailable in Tundra mode.
 
+Bezier paths are browser-memory-only drafts. Validated local-coordinate geometry
+is sampled into existing CP437/color cell types and applied through one model
+transaction. Curve subdivision fails explicitly when its bounded complexity
+budget is exceeded; fill uses row-sized coverage buffers, and subtraction visits
+stored cells rather than allocating blank gaps. No new dependencies, vector-file
+parser, persistence, network requests, server endpoints or file capabilities
+are introduced.
+
 ## Static hosting
 
 The browser build can be served from an HTTPS static host such as GitHub Pages,

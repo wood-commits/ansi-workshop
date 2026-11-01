@@ -33,6 +33,7 @@ Reloading loses all in-memory state.
 | `src/model.ts` | Sparse cells, coordinates, rectangular block operations, Bresenham stroke interpolation, transaction history |
 | `src/draw.ts` | Local-coordinate half-row stroke interpolation and matching-ink half-block merging |
 | `src/primitives.ts` | Aspect-correct rotated primitive coverage, full/half-block rasterization, color-preserving sparse subtraction |
+| `src/path.ts` | Local-coordinate cubic Bezier flattening, even-odd pixel coverage and sparse block-fit fill/subtraction |
 | `src/gradient.ts` | Aspect-correct linear/radial shading and ordered dithering |
 | `src/fill.ts` | Shared sparse painted-region matching, shape recoloring, enclosed blank-area discovery and filling |
 | `src/move.ts` | All-color connected shape discovery and sparse, edge-clamped move overlays |
@@ -238,6 +239,39 @@ be represented exactly in CP437 and are deliberately cleared entirely, never
 expanded into the removed area or recolored with the brush. All mask geometry
 is validated before model writes; malformed/unsafe geometry fails visibly.
 Cancellation preserves art/redo, and a net-zero subtraction adds no history.
+
+The Path tool holds a separate local-coordinate Bezier draft in App, with a
+safe-integer origin row and fractional node/incoming/outgoing points. Closing
+adds the closing cubic segment but leaves nodes and independent handles editable.
+Click-drag creates mirrored handles; moving an anchor translates both handles.
+Selected nodes are highlighted and available through a node selector. Deletion
+preserves closure with at least three remaining anchors; fewer anchors reopen
+the draft, and deleting the last clears it. Corner conversion collapses both
+handles. Curve conversion creates neighbor-oriented mirrored handles without
+moving the anchor; subsequent handle drags remain independent.
+Canceled pointer gestures restore the pre-gesture draft; Escape/tool switching
+discards it. Drafts warn on reload/New/Open, but are not document cells or exports.
+Finish validates the entire result and applies one Editor transaction.
+Agent commands, history and block writes pause while a draft exists.
+
+`path.ts` adaptively subdivides cubics in 1:2 VGA proportions with a 1/32-column
+flatness tolerance. Curve subdivision has an explicit complexity error rather
+than silently accepting an inaccurate result. Scanline crossings use even-odd
+coverage at 8x16 pixel centers; only one row of coverage is allocated at a time.
+Fill chooses blank/full/four half-block candidates by pixel mismatch and skips
+blank fits. Coordinates remain local during sampling, preserving half-row
+precision even near MAX_ROW. No document-height raster/DOM/storage is allocated.
+Safe signed handle coordinates may extend above row zero; rasterization clips
+those curves at the top edge. Exceeding safe upper-row precision errors explicitly.
+
+Subtract visits stored cells only, evaluates the original logical block geometry
+or bundled VGA glyph bitmap, and replaces covered samples with the current BG.
+Candidate blocks use surviving original FG/BG as foreground and the hole BG as
+background. This deliberately approximates clipped text/shading and multi-color
+remnants, unlike Primitive's conservative clearing. Empty/default edits normalize
+through Editor; no-op subtraction adds no history. Preview is derived from
+draft/current inks/document revision and shows the final edits on both canvases.
+Only the main canvas overlays editable cubic outlines and nodes/handles.
 
 The Gradient tool snapshots the four-connected stored cells matching the
 starting cell's colors and glyph family: full/half blocks and bytes 176-178

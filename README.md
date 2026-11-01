@@ -181,6 +181,21 @@ without another click. Hovering with all menus closed does not open one.
   those affected cells are cleared completely for a clean cut. Colored spaces
   and uniform-color cells can retain an exact surviving half. Cancellation
   leaves art/history unchanged; subtracting over blank space adds no undo step.
+- **Paths:** choose Path and Fill or Subtract. Click to add corner nodes;
+  click-drag a new node to create mirrored cubic Bezier handles. Click the first
+  node or Close path to close the outline. Closing does not apply it: nodes and
+  circular handles remain individually draggable until Finish path or Enter.
+  Finish also closes an open path. Select a node by clicking it or using the
+  Node selector; Delete node, Delete, or Backspace removes the selected node.
+  Make curve creates smooth mirrored handles; Make corner collapses them.
+  Deletion preserves closure with at least three nodes, otherwise reopens the
+  path. Escape/Cancel discards the draft. Switching tools discards unfinished paths.
+  Closed paths preview the result on both canvases using current FG/BG.
+  Fill fits full/upper/lower/left/right blocks to the interior, ignoring the
+  brush glyph. Subtract visits existing art only, cuts to the selected BG,
+  and fits surviving colors to blocks; partially clipped text/shading is a
+  bitmap-based approximation, not exact glyph clipping. Self-intersections use
+  even-odd filling. Finish is one undo step; drafts are not exported or saved.
 - **Position cursor:** choose Cursor, then click a cell to move without painting.
   Or hold Alt and click with any tool to reposition without switching tools.
   Cursor-only clicks clear the selection without changing art or undo/redo history.

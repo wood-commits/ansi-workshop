@@ -3,6 +3,7 @@ import { BLOCK_GLYPHS, CP437 } from './ansi'
 import { colorCss } from './colors'
 import { contains, type Cell, type Editor, key, MAX_ROW, type Point, type Rect, WIDTH } from './model'
 import type { GradientLine } from './gradient'
+import type { BezierPath } from './path'
 import { drawVgaGlyph, type CanvasFont } from './vgaFont'
 import { TOOL_CURSORS, type Tool } from './tools'
 
@@ -122,6 +123,8 @@ interface CanvasProps {
   singleClick?: boolean
   overlay?: ReadonlyMap<string, Cell>
   gradientLine?: GradientLine
+  path?: BezierPath
+  pathNode?: number
   onNavigate(point: Point): void
   onPoint(point: Point, start: boolean, pointer: PointerInput): void
   onEnd(canceled: boolean): void
@@ -130,7 +133,11 @@ interface CanvasProps {
   onRows(rows: number): void
 }
 
-export interface PointerInput { clientX: number; altKey: boolean; half: 0 | 1 }
+export interface PointerInput {
+  clientX: number; altKey: boolean; half: 0 | 1
+  subcell: Point
+  tolerance: Point
+}
 
 function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
   top, rows, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onEnd, onScroll, onKey,
@@ -163,7 +170,8 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
   const pointAt = (position: Pick<PointerEvent, 'clientX' | 'clientY'>, start: boolean, viewportTop = top) => {
     const rect = bounds()
     if (!rect) return undefined
-    let x = Math.floor(((position.clientX - rect.left) / rect.width * (gutter + WIDTH * cellWidth) - gutter) / cellWidth)
+    const fractionalColumn = ((position.clientX - rect.left) / rect.width * (gutter + WIDTH * cellWidth) - gutter) / cellWidth
+    let x = Math.floor(fractionalColumn)
     const fractionalRow = (position.clientY - rect.top) / rect.height * rows
     let row = Math.floor(fractionalRow)
     if ((selecting || primitive) && !start) {
@@ -171,7 +179,11 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
       row = Math.min(rows - 1, Math.max(0, row))
     } else if (x < 0 || x >= WIDTH || row < 0 || row >= rows) return undefined
     const half: 0 | 1 = fractionalRow - Math.floor(fractionalRow) < 0.5 ? 0 : 1
-    return { point: { x, y: Math.min(MAX_ROW, viewportTop + row) }, half }
+    return {
+      point: { x, y: Math.min(MAX_ROW, viewportTop + row) }, half,
+      subcell: { x: Math.min(1, Math.max(0, fractionalColumn - x)), y: Math.min(1, Math.max(0, fractionalRow - row)) },
+      tolerance: { x: 5 * (gutter + WIDTH * cellWidth) / rect.width / cellWidth, y: 5 * rows / rect.height },
+    }
   }
   const updatePointer = (viewportTop = top) => {
     const position = dragPointer.current
@@ -182,7 +194,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
     position.point = point
     position.half = half
     position.moved ||= point.x !== position.start.x || point.y !== position.start.y
-    onPoint(point, false, position)
+    onPoint(point, false, { ...position, subcell: hit.subcell, tolerance: hit.tolerance })
   }
   const finish = (canceled = false) => {
     const position = dragPointer.current
@@ -225,7 +237,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
       const hit = pointAt(event, true)
       if (!hit) return
       const { point, half } = hit
-      const pointer = { clientX: event.clientX, altKey: event.altKey, half }
+      const pointer = { clientX: event.clientX, altKey: event.altKey, half, subcell: hit.subcell, tolerance: hit.tolerance }
       event.currentTarget.focus({ preventScroll: true })
       if (onNavigate && (navigating || event.altKey)) {
         event.preventDefault()
@@ -281,10 +293,44 @@ function drawGradientLine(ctx: CanvasRenderingContext2D, line: GradientLine, top
   ctx.restore()
 }
 
+function drawPath(ctx: CanvasRenderingContext2D, path: BezierPath, selected: number | undefined, top: number, w: number, h: number, gutter: number) {
+  if (!path.nodes.length) return
+  const position = (point: Point): Point => ({ x: gutter + point.x * w, y: (path.origin - top + point.y) * h })
+  ctx.save()
+  ctx.beginPath()
+  const first = position(path.nodes[0].point)
+  ctx.moveTo(first.x, first.y)
+  const count = path.closed ? path.nodes.length : path.nodes.length - 1
+  for (let index = 0; index < count; index++) {
+    const a = position(path.nodes[index].outgoing)
+    const node = path.nodes[(index + 1) % path.nodes.length]
+    const b = position(node.incoming), c = position(node.point)
+    ctx.bezierCurveTo(a.x, a.y, b.x, b.y, c.x, c.y)
+  }
+  if (path.closed) ctx.closePath()
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.stroke()
+  ctx.strokeStyle = '#c4ee86'; ctx.lineWidth = 2; ctx.stroke()
+  for (const [index, node] of path.nodes.entries()) {
+    const p = position(node.point)
+    for (const handle of [node.incoming, node.outgoing]) {
+      if (handle.x === node.point.x && handle.y === node.point.y) continue
+      const target = position(handle)
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(target.x, target.y)
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 3; ctx.stroke()
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke()
+      ctx.beginPath(); ctx.arc(target.x, target.y, 4, 0, Math.PI * 2)
+      ctx.fillStyle = '#000'; ctx.fill(); ctx.stroke()
+    }
+    ctx.fillStyle = index === selected ? '#c4ee86' : '#000'; ctx.fillRect(p.x - 4, p.y - 4, 8, 8)
+    ctx.strokeStyle = index === selected ? '#fff' : '#c4ee86'; ctx.lineWidth = 2; ctx.strokeRect(p.x - 4, p.y - 4, 8, 8)
+  }
+  ctx.restore()
+}
+
 function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
-  editor, revision, cursor, top, selection, overlay, gradientLine, font,
+  editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font,
   rows, cellWidth, cellHeight, gutter,
-}: Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'overlay' | 'gradientLine' | 'font'> & {
+}: Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'overlay' | 'gradientLine' | 'path' | 'pathNode' | 'font'> & {
   rows: number; cellWidth: number; cellHeight: number; gutter: number
 }) {
   const raster = useRef<HTMLCanvasElement | null>(null)
@@ -339,7 +385,8 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
       ctx.strokeRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2)
     }
     if (gradientLine) drawGradientLine(ctx, gradientLine, top, cellWidth, cellHeight, gutter)
-  }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, cellWidth, cellHeight, gutter, font])
+    if (path) drawPath(ctx, path, pathNode, top, cellWidth, cellHeight, gutter)
+  }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, path, pathNode, cellWidth, cellHeight, gutter, font])
 }
 
 function useRowWheel(elementRef: RefObject<HTMLElement | null>, rows: number, disabled: boolean, onScroll: CanvasProps['onScroll'], focusedOnly = false) {
@@ -432,7 +479,7 @@ function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll, label 
   </div>
 }
 
-export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', primitive, halfBlock, singleClick, overlay, gradientLine, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
+export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
   const host = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const canvasId = useId()
@@ -462,7 +509,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   }, [cellHeight])
   useRowWheel(canvas, rows, !!(primitive && overlay), onScroll)
   useCanvasRenderer(canvas, {
-    editor, revision, cursor, top, selection, overlay, gradientLine, font,
+    editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font,
     rows, cellWidth, cellHeight, gutter: GUTTER,
   })
 
@@ -477,7 +524,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
         <span key={i} style={{ width: 10 * cellWidth }}>{String(i * 10 + 1).padStart(2, '0')}</span>)}
     </div>
     <canvas ref={canvas} id={canvasId} width={GUTTER + WIDTH * cellWidth} height={rows * cellHeight}
-      data-navigating={navigating} data-font={font} style={{ cursor: TOOL_CURSORS[tool] }}
+      data-navigating={navigating} data-font={font} data-path-nodes={path?.nodes.length} data-path-closed={path?.closed} style={{ cursor: TOOL_CURSORS[tool] }}
       tabIndex={0} aria-label={`ANSI canvas, cursor column ${cursor.x + 1}, row ${cursor.y + 1}`}
       {...pointerHandlers}
     />

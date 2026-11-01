@@ -17,6 +17,7 @@ and the internal clipboard disappear when you close or reload the page.
 - [Characters and colors](#characters-and-colors)
 - [Drawing tools](#drawing-tools)
   - [Primitive tool](#primitive-tool)
+  - [Path tool](#path-tool)
   - [Gradient tool](#gradient-tool)
   - [Fill tool](#fill-tool)
   - [Eyedropper tool](#eyedropper-tool)
@@ -158,6 +159,7 @@ light or dark art. The typing cursor and VGA preview navigation are unchanged.
 | Select | Drag a rectangular block for copy, cut, paste, flip, or delete. |
 | Move | Drag a painted cell to move its side-connected shape, regardless of glyph or color. |
 | Primitive | Drag a rectangle, ellipse, rounded rectangle, or star, filled or outlined. |
+| Path | Build an editable Bezier outline, then Finish to fill it or subtract it from existing art. |
 | Gradient | Drag a linear or radial gradient across a matching connected region. |
 | Fill | Click to recolor a matching shape or fill an enclosed blank area. |
 | Eyedropper | Click once to sample foreground and background colors. Dragging does not sample more cells. |
@@ -244,6 +246,61 @@ Full-cell cuts erase cells; representable half-cell remnants retain their
 original visible colors. Quarter-block remnants and partially cut text or
 shading cannot be represented exactly and are cleared completely.
 With **Outline**, only the outline is cut away, not the interior.
+
+### Path tool
+
+1. Choose **Path**, then **Mode > Fill** or **Subtract**.
+2. Click to add corner nodes. Click-drag when adding a node to create a smooth
+   curve with mirrored incoming/outgoing handles.
+3. Add at least three nodes. Click the first node or **Close path** to close
+   the outline without placing any art.
+4. Drag square nodes to move them and their handles. Drag circular handles
+   individually to reshape curves, even after closing. **Reopen path** lets
+   you append more nodes.
+5. Choose FG/BG while reviewing the closed path's live block preview.
+6. Click **Finish path** or press **Enter** with a canvas focused to apply the
+   whole path as one undo step. Finish also closes an open outline.
+
+**Escape** or **Cancel path** discards the draft without changing art/history.
+Switching tools also discards it. Pointer cancellation/focus loss rolls back
+only the current node/handle drag; the rest of the draft remains editable.
+Typing, F-keys, undo/redo and block edits pause while a draft exists. Tab still
+reaches controls; ordinary keyboard editing resumes after Finish or Cancel.
+New/Open asks before discarding a draft, and reload warns about it.
+
+#### Delete or convert nodes
+
+Click a square node or its handle, or choose it from **Node**, to select it.
+The selected square is filled green with a white border.
+
+- **Delete node**, **Delete**, or **Backspace** removes the selected node.
+  A closed path stays closed if at least three nodes remain. Fewer nodes
+  reopen it; deleting the last node clears the draft.
+- **Make curve** gives a corner smooth mirrored handles, oriented using its
+  neighbors. Drag either handle afterward to customize the curve.
+- **Make corner** collapses both handles to the anchor, making straight
+  segments at that node unless the adjacent nodes still have curve handles.
+  The anchor itself does not move.
+
+All these changes remain draft-only, including on closed paths. Finish commits
+only the final block result, not separate node-edit undo steps.
+
+Fill uses the current FG/BG, not the brush glyph. Paths are sampled in VGA's
+1:2 proportions and fitted to full, upper/lower and left/right half blocks.
+Tiny slivers can be omitted; CP437 has no arbitrary curved or quarter blocks.
+Self-intersecting paths use even-odd filling (crossing an edge toggles inside).
+
+Subtract replaces covered pixels with the current **BG**. Surviving full/half
+blocks keep their visible colors wherever representable. Clipped text and
+shading use the bundled IBM VGA bitmap to find the closest block approximation,
+even with Consolas selected. A cell can retain only one surviving color plus
+the hole BG, so multi-color remnants are approximate. Blank cells outside
+existing art are not added by subtraction.
+
+The main canvas shows the editable outline, nodes and handles; both canvases
+show the closed path's resulting block preview. Only finished paths become
+ordinary editable cells. Paths are not retained as vector objects after Finish,
+and unfinished drafts are not included in saves/exports.
 
 ### Gradient tool
 

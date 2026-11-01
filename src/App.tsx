@@ -8,6 +8,7 @@ import type { Tool } from './tools'
 import type { CanvasFont } from './vgaFont'
 import { Editor, EMPTY, MAX_ROW, WIDTH, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
+import { convertPathNode, rasterizePath, removePathNode, type BezierPath, type PathNode } from './path'
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
 import { bucketFill, type FillMode } from './fill'
 import { connectedShape, moveShape } from './move'
@@ -35,6 +36,7 @@ const TOOL_ICONS = {
   select: <rect x="4" y="4" width="16" height="16" rx="1" strokeDasharray="3 3" />,
   move: <path d="M12 3v18M3 12h18M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4" />,
   primitive: <><rect x="3" y="3" width="10" height="10" rx="1" /><circle cx="16" cy="16" r="5" /></>,
+  path: <><path d="M4 19C6 3 17 3 20 16M4 19l3-12M20 16l-2-9" /><rect x="2" y="17" width="4" height="4" /><rect x="18" y="14" width="4" height="4" /><circle cx="7" cy="7" r="2" /><circle cx="18" cy="7" r="2" /></>,
   gradient: <>
     <rect x="3" y="4" width="18" height="16" rx="1" />
     <path d="M6 7v10" strokeOpacity=".2" /><path d="M9 7v10" strokeOpacity=".4" />
@@ -66,7 +68,14 @@ export function App() {
   const [bg, setBg] = useState(0)
   const [code, setCode] = useState(219)
   const [palette, setPalette] = useState(0)
-  const [tool, setTool] = useState<Tool>('draw')
+  const [tool, setActiveTool] = useState<Tool>('draw')
+  const [path, setPath] = useState<BezierPath>()
+  const [pathNode, setPathNode] = useState<number>()
+  const pathDraft = useRef<BezierPath | undefined>(undefined)
+  const [pathSubtract, setPathSubtract] = useState(false)
+  const pathDrag = useRef<{
+    index: number; part: keyof PathNode | 'new'; start: Point; node: PathNode; before: BezierPath; beforeSelection?: number
+  } | undefined>(undefined)
   const [drawMode, setDrawMode] = useState<'full' | 'half'>('full')
   const [movePreview, setMovePreview] = useState<ReadonlyMap<string, Cell>>()
   const moveDrag = useRef<{
@@ -118,14 +127,30 @@ export function App() {
   const selection = useMemo(() => anchor && selectionEnd ? rectangle(anchor, selectionEnd) : undefined, [anchor, selectionEnd])
   const dirty = editor.dirty
   const tundra = editor.format === 'tundra'
+  const selectedPathNode = pathNode === undefined ? undefined : path?.nodes[pathNode]
+  const pathNodeCurved = selectedPathNode && [selectedPathNode.incoming, selectedPathNode.outgoing]
+    .some(handle => handle.x !== selectedPathNode.point.x || handle.y !== selectedPathNode.point.y)
+  const pathResult = useMemo(() => {
+    if (!path?.closed || path.nodes.length < 3) return { revision }
+    try {
+      return { revision, cells: rasterizePath(path, { fg, bg }, pathSubtract ? editor.cells : undefined, editor.format) }
+    } catch (cause) {
+      return { revision, error: cause instanceof Error ? cause.message : String(cause), cause }
+    }
+    // Revision tracks edits to the mutable Editor, including subtraction's source art.
+  }, [path, fg, bg, pathSubtract, editor, revision])
+  const pathPreview = pathResult.cells
+  useEffect(() => {
+    if (pathResult.error) console.error('ANSI Workshop:', pathResult.cause)
+  }, [pathResult])
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (dirty || saving || opening) { event.preventDefault(); event.returnValue = '' }
+      if (dirty || path || saving || opening) { event.preventDefault(); event.returnValue = '' }
     }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [dirty, saving, opening])
+  }, [dirty, path, saving, opening])
 
   useEffect(() => {
     const dismissOutside = (event: Event) => {
@@ -144,6 +169,42 @@ export function App() {
     console.error('ANSI Workshop:', cause)
     setError(text)
   }
+  const cancelPath = () => {
+    pathDraft.current = undefined; pathDrag.current = undefined
+    setPath(undefined); setPathNode(undefined)
+    setMessage('Path canceled. The document is unchanged.')
+  }
+  const setTool = (next: Tool) => {
+    if (next !== 'path' && pathDraft.current) cancelPath()
+    setActiveTool(next)
+  }
+  const updatePath = (next: BezierPath) => {
+    pathDraft.current = next; setPath(next); setError('')
+  }
+  const deletePathNode = () => {
+    const draft = pathDraft.current
+    if (!draft?.nodes.length) { setMessage('Select a path node to delete.'); return }
+    const index = pathNode ?? draft.nodes.length - 1
+    const next = removePathNode(draft, index)
+    if (!next.nodes.length) { cancelPath(); setMessage('Last node deleted. The path draft is cleared.'); return }
+    updatePath(next)
+    setPathNode(Math.min(index, next.nodes.length - 1))
+    setMessage(next.nodes.length < 3 ? 'Node deleted. Add at least three nodes before finishing.' : 'Node deleted. Remaining nodes stay editable.')
+  }
+  const finishPath = () => {
+    const draft = pathDraft.current
+    if (!draft) { setMessage('Click the canvas to start a path.'); return }
+    try {
+      const cells = rasterizePath({ ...draft, closed: true }, { fg, bg }, pathSubtract ? editor.cells : undefined, editor.format)
+      const version = editor.version
+      for (const [id, cell] of cells) editor.paint(pointFromKey(id), cell)
+      editor.commit(); refresh()
+      pathDraft.current = undefined; pathDrag.current = undefined
+      setPath(undefined); setPathNode(undefined); setError('')
+      setMessage(editor.version === version ? 'Path unchanged. No cells were altered.'
+        : pathSubtract ? 'Path subtracted. Undo restores the original art.' : 'Path filled. Undo removes the entire path.')
+    } catch (cause) { report(cause) }
+  }
   const move = (point: Point) => {
     const next = { x: Math.min(WIDTH - 1, Math.max(0, point.x)), y: clampRow(point.y) }
     setCursor(next)
@@ -153,6 +214,12 @@ export function App() {
   const scroll = useCallback((delta: number) => setTop(previous => clampRow(previous + delta)), [])
   const commit = () => { editor.commit(); lastPoint.current = undefined; lastHalfPoint.current = undefined; refresh() }
   const endPointer = (canceled: boolean) => {
+    if (tool === 'path') {
+      const drag = pathDrag.current
+      pathDrag.current = undefined
+      if (canceled && drag) { updatePath(drag.before); setPathNode(drag.beforeSelection) }
+      return
+    }
     const moving = moveDrag.current
     if (moving) {
       moveDrag.current = undefined
@@ -191,8 +258,8 @@ export function App() {
         : 'Primitive placed. Undo removes the entire shape.')
     } catch (cause) { report(cause) }
   }
-  const undo = () => { editor.undo(); refresh() }
-  const redo = () => { editor.redo(); refresh() }
+  const undo = () => { if (pathDraft.current) return; editor.undo(); refresh() }
+  const redo = () => { if (pathDraft.current) return; editor.redo(); refresh() }
   const historyKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.altKey || event.nativeEvent.isComposing || !(event.ctrlKey || event.metaKey)) return
     if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog')) return
@@ -240,18 +307,20 @@ export function App() {
     primitiveDrag.current = undefined; setPrimitivePreview(undefined)
     gradientDrag.current = undefined; setGradientPreview(undefined); setGradientLine(undefined)
     moveDrag.current = undefined; setMovePreview(undefined)
+    pathDraft.current = undefined; pathDrag.current = undefined; setPath(undefined); setPathNode(undefined)
     setError(''); refresh()
   }
   const newFile = (format: DocumentFormat = 'ansi') => {
     if (saving || abortOpen.current) return
-    if (editor.dirty && !window.confirm('Discard unsaved changes and start a new screen?')) return
+    if ((editor.dirty || pathDraft.current) && !window.confirm('Discard unsaved changes and start a new screen?')) return
     replaceDocument(new Editor(undefined, undefined, format), format === 'tundra' ? 'untitled.tnd' : 'untitled.ans')
     setMessage('New 80-column screen. Rows grow as you draw.')
   }
   const openFile = async () => {
     if (saving || abortOpen.current) return
-    if (editor.dirty && !window.confirm('Discard unsaved changes and open another art file?')) return
+    if ((editor.dirty || pathDraft.current) && !window.confirm('Discard unsaved changes and open another art file?')) return
     const startingRevision = revisionCounter.current
+    const startingPath = pathDraft.current
     const controller = new AbortController()
     abortOpen.current = controller
     setOpening(true); setError('')
@@ -263,7 +332,8 @@ export function App() {
       const format = /\.tnd$/i.test(file.name) ? 'tundra' : 'ansi'
       const { cells, sauce } = await (format === 'tundra' ? readTundraDocument : readAnsiDocument)(file, controller.signal)
       controller.signal.throwIfAborted()
-      if (revisionCounter.current !== startingRevision && editor.dirty &&
+      if (((revisionCounter.current !== startingRevision && editor.dirty) ||
+           (pathDraft.current && pathDraft.current !== startingPath)) &&
           !window.confirm('The current document changed while opening. Discard these latest changes and open the file?')) {
         setMessage('Open canceled. The current document is unchanged.')
         return
@@ -302,6 +372,7 @@ export function App() {
       } else {
         setMessage('Download requested. Check your browser downloads; delivery cannot be verified. Use Chrome/Edge for native directory picking.')
       }
+      if (pathDraft.current) setMessage(previous => `${previous} Unfinished path not included; Finish it before the next save.`)
       refresh()
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') setMessage('Save canceled. Changes are still in memory.')
@@ -309,6 +380,14 @@ export function App() {
     } finally { setSaving(false); abortSave.current = undefined }
   }
   const keyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
+    if (tool === 'path' && pathDraft.current) {
+      if (event.key === 'Tab') return
+      event.preventDefault()
+      if (event.key === 'Escape') cancelPath()
+      else if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) finishPath()
+      else if ((event.key === 'Backspace' || event.key === 'Delete') && !pathDrag.current) deletePathNode()
+      return
+    }
     if (primitiveDrag.current || gradientDrag.current || moveDrag.current) {
       event.preventDefault()
       return
@@ -381,7 +460,55 @@ export function App() {
   }
   const point = (next: Point, start: boolean, pointer: PointerInput) => {
     if (!validPoint(next)) return
-    if (tool === 'fill' || tool === 'eyedropper') {
+    if (tool === 'path') {
+      const draft = pathDraft.current ?? { origin: next.y, nodes: [], closed: false }
+      const position = { x: next.x + pointer.subcell.x, y: next.y - draft.origin + pointer.subcell.y }
+      setCursor(next); clearSelection()
+      if (start) {
+        let hit: { index: number; part: keyof PathNode } | undefined
+        let nearest = 1
+        for (let index = 0; index < draft.nodes.length; index++) {
+          const node = draft.nodes[index]
+          for (const part of ['point', 'incoming', 'outgoing'] as const) {
+            if (part !== 'point' && node[part].x === node.point.x && node[part].y === node.point.y) continue
+            const distance = Math.hypot((node[part].x - position.x) / pointer.tolerance.x,
+              (node[part].y - position.y) / pointer.tolerance.y)
+            if (distance < nearest) { hit = { index, part }; nearest = distance }
+          }
+        }
+        if (hit?.index === 0 && hit.part === 'point' && !draft.closed && draft.nodes.length >= 3) {
+          updatePath({ ...draft, closed: true })
+          setPathNode(0)
+          setMessage('Path closed. Drag nodes or handles to adjust; Finish or Enter applies it.')
+          return
+        }
+        if (hit) {
+          pathDrag.current = { ...hit, start: position, node: draft.nodes[hit.index], before: draft, beforeSelection: pathNode }
+          setPathNode(hit.index)
+        } else if (!draft.closed) {
+          const node = { point: position, incoming: position, outgoing: position }
+          pathDrag.current = { index: draft.nodes.length, part: 'new', start: position, node, before: draft, beforeSelection: pathNode }
+          setPathNode(draft.nodes.length)
+          updatePath({ ...draft, nodes: [...draft.nodes, node] })
+        } else {
+          setMessage('Drag a node or handle to edit the closed path; Finish or Enter applies it.')
+          return
+        }
+      } else {
+        const drag = pathDrag.current
+        if (!drag) return
+        const dx = position.x - drag.start.x, dy = position.y - drag.start.y
+        const shift = (p: Point): Point => ({ x: p.x + dx, y: p.y + dy })
+        const node = drag.part === 'new'
+          ? { ...drag.node, outgoing: position, incoming: { x: 2 * drag.node.point.x - position.x, y: 2 * drag.node.point.y - position.y } }
+          : drag.part === 'point'
+            ? { point: shift(drag.node.point), incoming: shift(drag.node.incoming), outgoing: shift(drag.node.outgoing) }
+            : { ...draft.nodes[drag.index], [drag.part]: shift(drag.node[drag.part]) }
+        updatePath({ ...draft, nodes: draft.nodes.map((value, index) => index === drag.index ? node : value) })
+      }
+      setMessage(draft.closed ? 'Path closed. Drag nodes or handles; Finish or Enter applies; Escape cancels.'
+        : 'Click to add nodes; drag to create curves. Click the first node to close; Finish or Enter applies; Escape cancels.')
+    } else if (tool === 'fill' || tool === 'eyedropper') {
       if (!start) return
       clearSelection()
       setCursor(next)
@@ -534,16 +661,16 @@ export function App() {
         <button onClick={() => { editor.commit(); refresh(); setShowSauce(true) }} disabled={saving || opening}>SAUCE…</button>
       </div></details>
       <details open={openMenu === 'Edit'}><summary onMouseEnter={() => hoverMenu('Edit')} onClick={event => toggleMenu(event, 'Edit')}>Edit</summary><div className="menu-popup wide-menu" onClick={closeMenu}>
-        <button onClick={undo} disabled={!editor.canUndo}>Undo <kbd>Ctrl Z</kbd></button>
-        <button onClick={redo} disabled={!editor.canRedo}>Redo <kbd>Ctrl Shift Z</kbd></button>
+        <button onClick={undo} disabled={!editor.canUndo || !!path}>Undo <kbd>Ctrl Z</kbd></button>
+        <button onClick={redo} disabled={!editor.canRedo || !!path}>Redo <kbd>Ctrl Shift Z</kbd></button>
         <div className="menu-label">Block operations</div>
         <button onClick={() => setTool(tool === 'select' ? 'draw' : 'select')}>{tool === 'select' ? '✓ ' : ''}Block select toggle</button>
         <button onClick={copy} disabled={!selection}>Copy <kbd>Ctrl C</kbd></button>
-        <button onClick={cut} disabled={!selection}>Cut <kbd>Ctrl X</kbd></button>
-        <button onClick={paste} disabled={!clipboard}>Paste at cursor <kbd>Ctrl V</kbd></button>
-        <button onClick={() => flip('x')} disabled={!selection}>Flip X (mirror horizontally)</button>
-        <button onClick={() => flip('y')} disabled={!selection}>Flip Y (mirror vertically)</button>
-        <button disabled={!selection} onClick={() => { if (selection) { editor.clear(selection); editor.commit(); refresh() } }}>Delete block</button>
+        <button onClick={cut} disabled={!selection || !!path}>Cut <kbd>Ctrl X</kbd></button>
+        <button onClick={paste} disabled={!clipboard || !!path}>Paste at cursor <kbd>Ctrl V</kbd></button>
+        <button onClick={() => flip('x')} disabled={!selection || !!path}>Flip X (mirror horizontally)</button>
+        <button onClick={() => flip('y')} disabled={!selection || !!path}>Flip Y (mirror vertically)</button>
+        <button disabled={!selection || !!path} onClick={() => { if (selection) { editor.clear(selection); editor.commit(); refresh() } }}>Delete block</button>
         <button onClick={clearSelection} disabled={!selection}>Deselect <kbd>Esc</kbd></button>
       </div></details>
       <details open={openMenu === 'Window'}><summary ref={windowHeading} onMouseEnter={() => hoverMenu('Window')} onClick={event => toggleMenu(event, 'Window')}>Window</summary><div className="menu-popup" onClick={closeMenu}>
@@ -630,13 +757,14 @@ export function App() {
         <button aria-pressed={tool === 'select'} onClick={() => setTool('select')}><ToolIcon tool="select" />Select</button>
         <button aria-pressed={tool === 'move'} title="Drag all side-connected painted cells, regardless of color or glyph" onClick={() => setTool('move')}><ToolIcon tool="move" />Move</button>
         <button aria-pressed={tool === 'primitive'} onClick={() => setTool('primitive')}><ToolIcon tool="primitive" />Primitive</button>
+        <button aria-pressed={tool === 'path'} onClick={() => setTool('path')}><ToolIcon tool="path" />Path</button>
         <button aria-pressed={tool === 'gradient'} onClick={() => setTool('gradient')}><ToolIcon tool="gradient" />Gradient</button>
         <button aria-pressed={tool === 'fill'} title="Fill with the selected foreground color" onClick={() => setTool('fill')}><ToolIcon tool="fill" />Fill</button>
         <button aria-pressed={tool === 'eyedropper'} title="Pick foreground and background colors without changing the brush glyph" onClick={() => setTool('eyedropper')}><ToolIcon tool="eyedropper" />Eyedropper</button>
       </div>
       <div className="tool-group history-tools">
-        <button onClick={undo} disabled={!editor.canUndo} title="Undo">↶</button>
-        <button onClick={redo} disabled={!editor.canRedo} title="Redo">↷</button>
+        <button onClick={undo} disabled={!editor.canUndo || !!path} title="Undo">↶</button>
+        <button onClick={redo} disabled={!editor.canRedo || !!path} title="Redo">↷</button>
       </div>
       <form className="row-navigation" onSubmit={event => {
         event.preventDefault()
@@ -668,6 +796,39 @@ export function App() {
         {tool === 'recolor' && <span className="muted">Drag to recolor existing cells with FG and BG · Glyphs unchanged · Blank cells untouched</span>}
         {tool === 'select' && <span className="muted">Drag to select a block · Shift+arrows extends the selection</span>}
         {tool === 'move' && <span className="muted">Drag connected art to move it · Destination cells are overwritten · Esc cancels</span>}
+        {tool === 'path' && <div className="primitive-controls">
+          <label>Mode <select aria-label="Path mode" title="Fill uses FG/BG. Subtract cuts to BG and approximates clipped glyphs." value={pathSubtract ? 'subtract' : 'fill'} onChange={event => {
+            const value = event.target.value
+            if (value !== 'fill' && value !== 'subtract') { report(new Error('Unknown path mode.')); return }
+            const subtract = value === 'subtract'
+            setPathSubtract(subtract)
+          }}><option value="fill">Fill</option><option value="subtract">Subtract</option></select></label>
+          <button disabled={!path || path.nodes.length < 3} onClick={() => {
+            if (pathDraft.current) updatePath({ ...pathDraft.current, closed: !pathDraft.current.closed })
+          }}>{path?.closed ? 'Reopen path' : 'Close path'}</button>
+          <button disabled={!path || path.nodes.length < 3} onClick={finishPath}>Finish path</button>
+          <button disabled={!path} onClick={cancelPath}>Cancel path</button>
+          <label>Node <select aria-label="Path node" value={pathNode ?? ''} disabled={!path?.nodes.length} onChange={event => {
+            const index = Number(event.target.value)
+            if (!path || !Number.isInteger(index) || index < 0 || index >= path.nodes.length) {
+              report(new Error('Select an existing path node.')); return
+            }
+            setPathNode(index)
+          }}>
+            {pathNode === undefined && <option value="">Select node</option>}
+            {path?.nodes.map((_node, index) => <option key={index} value={index}>Node {index + 1}</option>)}
+          </select></label>
+          <button disabled={pathNode === undefined} onClick={deletePathNode}>Delete node</button>
+          {(['Corner', 'Curve'] as const).map(kind => <button key={kind}
+            aria-pressed={!!selectedPathNode && (kind === 'Curve') === !!pathNodeCurved}
+            disabled={!selectedPathNode || (kind === 'Curve') === !!pathNodeCurved} onClick={() => {
+            if (pathDraft.current && pathNode !== undefined) {
+              updatePath(convertPathNode(pathDraft.current, pathNode, kind === 'Curve'))
+              setMessage(`Node ${pathNode + 1} converted to ${kind.toLowerCase()}. Drag its node or handles to adjust.`)
+            }
+          }}>Make {kind.toLowerCase()}</button>)}
+          <span className="muted">Drag nodes/handles · Enter finishes · Esc cancels</span>
+        </div>}
         {tool === 'primitive' && <div className="primitive-controls">
           <label>Mode <select aria-label="Primitive mode" value={primitiveSubtract ? 'subtract' : 'draw'} onChange={event => setPrimitiveSubtract(event.target.value === 'subtract')}>
             <option value="draw">Draw</option><option value="subtract">Subtract</option>
@@ -711,7 +872,7 @@ export function App() {
       <section className="editor-panel" aria-label="Screen editor">
         <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>80 × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : 'ANSI'}</span></span></div>
         <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={cellSize} font={font}
-          primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move'} overlay={movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine}
+          primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
           halfBlock={tool === 'draw' && drawMode === 'half'}
           navigating={tool === 'cursor'} onNavigate={navigate} onPoint={point} onEnd={endPointer} onScroll={scroll} onKey={keyDown} onRows={setVisibleRows} />
@@ -743,7 +904,7 @@ export function App() {
       </section>
       <aside className="sidebar">
         {!tundra && <AgentPanel key={`agents-${agentDocument}`} onCommand={(documentId, command) => {
-          if (lastPoint.current || primitiveDrag.current || gradientDrag.current || moveDrag.current) return { ok: false, error: 'A pointer stroke is in progress. Try again after the user finishes drawing.' }
+          if (lastPoint.current || primitiveDrag.current || gradientDrag.current || moveDrag.current || pathDraft.current) return { ok: false, error: 'A pointer stroke is in progress. Try again after the user finishes drawing.' }
           const result = executeAgentCommand(editor, documentId, revisionCounter.current, command)
           if (result.ok && command.type === 'draw') {
             refresh()
@@ -779,8 +940,8 @@ export function App() {
           <p className="color-note">Classic BBS colors: 16 foregrounds, 8 backgrounds. Bright backgrounds and blink are not used.</p>
         </section>}
         {showPreview && <VgaPreview key={`preview-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} font={font}
-          scrollingDisabled={!!(movePreview ?? gradientPreview ?? primitivePreview)}
-          selection={selection} overlay={movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
+          scrollingDisabled={!!(pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview)}
+          selection={selection} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
           onEnd={(next, moved) => { if (!moved) clearSelection(); move(next) }} />}
         <section className="panel quick-help"><h2>At your fingertips</h2>
           <p><kbd>↑ ↓ ← →</kbd> Move cursor</p><p><kbd>F1–F12</kbd> Place palette character</p>
@@ -797,7 +958,8 @@ export function App() {
       windowHeading.current?.focus()
     }} />}
     <div className="status-area">
-      {error && <div role="alert" className="error-banner"><strong>Something needs attention:</strong> {error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
+      {(error || pathResult.error) && <div role="alert" className="error-banner"><strong>Something needs attention:</strong> {error || pathResult.error}
+        {!pathResult.error && <button onClick={() => setError('')} aria-label="Dismiss error">×</button>}</div>}
       <footer className="status-bar">
         <span className="cursor-position" aria-label="Cursor position">COL <strong>{String(cursor.x + 1).padStart(2, '0')}</strong> ROW <strong>{String(cursor.y + 1).padStart(2, '0')}</strong></span>
         <span className="status-message" role="status">{message}</span>
