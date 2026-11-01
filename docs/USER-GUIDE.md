@@ -411,6 +411,9 @@ The VGA preview also supports drag-to-select, regardless of the active tool.
   explore farther. Its bottom is not a document length limit.
 - Use **Window > Hide/Show VGA Preview** to toggle the thumbnail.
   Click the preview to move the cursor without painting; drag to select.
+  Focus it to wheel-scroll both viewports, or use the scrollbar beside it.
+  Preview scrollbar track clicks and Page Up/Down move by 60 rows without
+  moving the cursor or editing art. Live shape placement pauses scrolling.
   It supports canvas keyboard shortcuts too.
 - In **Settings**, independently choose **IBM VGA 8x16** or **Consolas**, and
   **Pixel perfect (8x16)**, **1.25x (10x20)**, or **2x (16x32)** cell size.

@@ -144,7 +144,10 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .color-note { font-size: 9px; line-height: 1.6; margin-top: 15px; color: var(--muted); }
 .preview-panel { padding: 13px 10px 10px; }
 .preview-panel .panel-heading { padding: 0 5px; margin-bottom: 12px; }
+.preview-viewport { position: relative; padding-right: 18px; }
+.preview-viewport .row-scrollbar { top: 0; bottom: 0; }
 .preview-panel canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; background: #000; border: 1px solid #293344; cursor: crosshair; touch-action: none; }
+.preview-panel canvas:focus-visible { outline-offset: -2px; }
 .preview-panel > p { font: 9px Consolas, monospace; color: var(--muted); text-align: center; margin-top: 10px; }
 .quick-help { padding: 15px; }
 .quick-help h2 { margin-bottom: 12px; color: #b6c1d1; }

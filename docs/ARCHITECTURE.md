@@ -342,6 +342,12 @@ Pending Open/Save operations retain visible toolbar cancellation controls.
 
 The preview renders 80x60 cells with 8x16 backing pixels and CSS thumbnail
 scaling, sharing the top-row offset, cursor, and selection.
+Its bounded scrollbar reuses the main canvas control with 60-row pages and
+an independently cached sparse extent. Both bars update the same top-row state.
+The shared non-passive wheel hook scrolls three rows (or one surface-sized page
+for page-mode events), preserving Ctrl/Shift wheel behavior. Preview wheel input
+requires focus within its viewport; both wheel input and its scrollbar are
+disabled during live shape placement.
 Both canvases share a pointer/capture/auto-scroll hook. Pointer coordinates
 map through each canvas's displayed content bounds, excluding its border.
 Preview clicks move without painting and drags select with any active tool;

@@ -342,12 +342,28 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
   }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, cellWidth, cellHeight, gutter, font])
 }
 
-function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll }: {
+function useRowWheel(elementRef: RefObject<HTMLElement | null>, rows: number, disabled: boolean, onScroll: CanvasProps['onScroll'], focusedOnly = false) {
+  useEffect(() => {
+    const element = elementRef.current
+    if (!element) return
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.shiftKey || (focusedOnly && !element.contains(document.activeElement))) return
+      event.preventDefault()
+      if (disabled) return
+      onScroll(Math.sign(event.deltaY) * (event.deltaMode === 2 ? rows : 3))
+    }
+    element.addEventListener('wheel', wheel, { passive: false })
+    return () => element.removeEventListener('wheel', wheel)
+  }, [elementRef, onScroll, rows, disabled, focusedOnly])
+}
+
+function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll, label = 'Canvas rows' }: {
   top: number
   rows: number
   maximum: number
   canvasId: string
   disabled: boolean
+  label?: string
   onScroll(delta: number): void
 }) {
   const [dragMaximum, setDragMaximum] = useState<number>()
@@ -370,7 +386,7 @@ function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll }: {
     onScroll(next - top)
   }
 
-  return <div className="row-scrollbar" role="scrollbar" aria-label="Canvas rows"
+  return <div className="row-scrollbar" role="scrollbar" aria-label={label}
     aria-orientation="vertical" aria-controls={canvasId} aria-valuemin={0}
     aria-valuemax={max} aria-valuenow={top} aria-valuetext={`Top row ${top + 1}`}
     aria-disabled={disabled} tabIndex={0}
@@ -444,18 +460,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
     observer.observe(element)
     return () => observer.disconnect()
   }, [cellHeight])
-  useEffect(() => {
-    const element = canvas.current
-    if (!element) return
-    const wheel = (event: WheelEvent) => {
-      if (event.ctrlKey || event.shiftKey) return
-      event.preventDefault()
-      if (primitive && overlay) return
-      onScroll(Math.sign(event.deltaY) * (event.deltaMode === 2 ? rows : 3))
-    }
-    element.addEventListener('wheel', wheel, { passive: false })
-    return () => element.removeEventListener('wheel', wheel)
-  }, [onScroll, rows, primitive, overlay])
+  useRowWheel(canvas, rows, !!(primitive && overlay), onScroll)
   useCanvasRenderer(canvas, {
     editor, revision, cursor, top, selection, overlay, gradientLine, font,
     rows, cellWidth, cellHeight, gutter: GUTTER,
@@ -485,10 +490,15 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
 
 type PreviewProps = Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'onPoint' | 'onScroll' | 'onKey' | 'overlay' | 'gradientLine' | 'font'> & {
   onEnd(point: Point, moved: boolean): void
+  scrollingDisabled: boolean
 }
 
-export function VgaPreview({ editor, revision, cursor, top, selection, onPoint, onEnd, onScroll, onKey, overlay, gradientLine, font = 'ibm-vga' }: PreviewProps) {
+export function VgaPreview({ editor, revision, cursor, top, selection, onPoint, onEnd, onScroll, onKey, overlay, gradientLine, scrollingDisabled, font = 'ibm-vga' }: PreviewProps) {
+  const viewport = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
+  const canvasId = useId()
+  const extent = useMemo(() => ({ revision, lastRow: editor.lastRow }), [editor, revision])
+  useRowWheel(viewport, 60, scrollingDisabled, onScroll, true)
   const pointerHandlers = useCanvasPointer(canvas, {
     top, rows: 60, cellWidth: 8, gutter: 0, selecting: true, onPoint, onEnd, onScroll, onKey,
   })
@@ -498,10 +508,15 @@ export function VgaPreview({ editor, revision, cursor, top, selection, onPoint, 
   })
   return <section className="panel preview-panel" aria-label="VGA preview">
     <div className="panel-heading"><h2>VGA preview</h2><span className="badge">8:16</span></div>
-    <canvas ref={canvas} width={640} height={960} tabIndex={0}
+    <div ref={viewport} className="preview-viewport">
+    <canvas ref={canvas} id={canvasId} width={640} height={960} tabIndex={0}
       data-font={font}
       aria-label={`Live VGA preview, rows ${top + 1} through ${top + 60}`} {...pointerHandlers} />
+    <RowScrollbar top={top} rows={60} canvasId={canvasId} label="VGA preview rows"
+      maximum={Math.min(MAX_ROW, Math.max(extent.lastRow, top) + 60 * 3)}
+      disabled={scrollingDisabled} onScroll={onScroll} />
+    </div>
     <p>Live proportions · rows {top + 1}–{top + 60}</p>
-    <p>Click to move · drag to select · canvas shortcuts available</p>
+    <p>Click to move · drag to select · focus to wheel-scroll</p>
   </section>
 }

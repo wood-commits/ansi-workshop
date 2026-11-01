@@ -779,6 +779,7 @@ export function App() {
           <p className="color-note">Classic BBS colors: 16 foregrounds, 8 backgrounds. Bright backgrounds and blink are not used.</p>
         </section>}
         {showPreview && <VgaPreview key={`preview-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} font={font}
+          scrollingDisabled={!!(movePreview ?? gradientPreview ?? primitivePreview)}
           selection={selection} overlay={movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
           onEnd={(next, moved) => { if (!moved) clearSelection(); move(next) }} />}
         <section className="panel quick-help"><h2>At your fingertips</h2>

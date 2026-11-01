@@ -270,6 +270,9 @@ without another click. Hovering with all menus closed does not open one.
 - **VGA preview:** Window shows/hides a live 640x960 backing canvas displayed
   at thumbnail size, using 8x16 cell proportions. It shows 60 rows starting
   at the main viewport's top row, not a squeezed image of the whole document.
+  Focus the preview to wheel-scroll both viewports, or use its scrollbar.
+  Its track and Page Up/Down keys move by 60 rows without moving the cursor
+  or editing art; scrolling pauses during live shape placement.
   Click the preview to move the cursor without painting, or drag to select a
   block regardless of the active tool. Cursor/selection overlays stay synchronized
   with the main canvas. Drag above/below the preview to auto-scroll; the main
