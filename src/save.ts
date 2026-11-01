@@ -52,7 +52,7 @@ export async function writeAscii(
   await writeChunks(asciiChunks(cells), handle, name, signal)
 }
 
-async function writeChunks(
+export async function writeChunks(
   source: Iterable<Uint8Array<ArrayBuffer>>,
   handle: AnsiFileHandle | undefined,
   name: string,

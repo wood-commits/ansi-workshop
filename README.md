@@ -462,9 +462,63 @@ the npm registry with dependency metadata. Passing checks do not prove absence
 of vulnerabilities. See [SECURITY.md](./SECURITY.md) for boundaries and scanner
 coverage, and [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for implementation.
 
+## Experimental Ansimation
+
+Choose **Window > Ansimation (experimental)** to animate a snapshot of 80 columns
+and 25 rows starting at the editor's current top row. There is no timeline.
+Choose a canned effect, frame detail, and preview modem speed, then **Play**.
+Replay starts from the beginning; changing a control stops playback. Nothing
+changes the original document, undo history, modified indicator, or save handle.
+
+Single-art effects reveal the art from blank, or erase it to blank. **Load second
+ANSI** uses the selected file's first 25 rows as the layer beneath the current
+snapshot, without replacing the editor document. Effects include wipe, cell
+cross-dissolve, flickering flame, downward/across erasers, wandering spotlight,
+Venetian blinds, iris reveal, digital rain, Neo, bullet holes, checkerboard, text spinner,
+and text slide. Cross-dissolve
+switches whole cells rather than blending colors outside the DOS palette.
+
+**Neo** rains flickering ASCII letters/digits in light and dark green in sparse
+trails: one rain column per four-column group, at most 20 across the screen.
+It reveals the art beneath and works with one or two ANSIs.
+**Bullet holes** removes differently sized, aspect-correct circles one at a time.
+Blocks fly outward, shrink, and disappear before the next hole is cut. Earlier
+holes stay open and overlap until the full screen is revealed. With one ANSI
+the holes expose blank space; with two they expose the second art beneath.
+Its 61 steps are automatic so frame detail cannot skip a burst's cleanup.
+**Text spinner** and **Text slide** are single-art effects that reveal only
+ASCII A-Z, a-z, and 0-9, top-to-bottom and left-to-right. Accented/Greek CP437
+glyphs, punctuation, borders, and shading remain unchanged. Spinner emits
+`|/-\|/-\|` three times before each letter. Sliding letters enter one at a time from column
+80, cross blank spaces, and hide behind decorative glyphs, retaining each
+position's background color. The final screen exactly matches the original.
+Any loaded second ANSI is retained for other effects but is not used for text
+effects. Text steps are generated automatically; frame detail is hidden so it
+cannot skip spinner phases or sliding positions. A screen without ASCII letters
+or digits is unchanged, with a visible explanation.
+
+Preview speeds are 2.4k, 9.6k, **14.4k**, **28.8k**, **56k**, and 115.2k. Preview
+consumes the actual exported bytes, including partial frame updates, approximating
+serial 8N1 at ten bits per byte. Compression, latency, and real BBS behavior
+can change the speed. Background tabs pause transmission. Frame detail chooses
+13, 37, or 73 generated frames for general transitions, not a guaranteed
+duration. Bullet holes and text effects always include their required steps; lower modem
+speeds make their motion easier to see.
+
+**Export ANSI** writes a separate binary CP437 `.ans` animation copy through the
+existing browser picker/download flow. It uses classic bold bright foregrounds,
+eight backgrounds, and cursor-addressed changed cells without bottom-row
+newlines. **Plain ANSI has no portable frame delays**: playback depends on
+the BBS/player's output speed; fast viewers may display only the final screen.
+The preview speed is not embedded in the file. Use an 80x25 CP437 terminal and
+test on your intended BBS. Reopening an exported animation in the editor loads
+its final screen, not an editable sequence. No video export or automatic loop.
+All sources/settings stay in page memory; save your art separately before closing.
+
 ## Deliberate first-version scope
 
-No animation, SAUCE metadata editing/export, variable width, remote service,
+No timeline/frame-by-frame animation editing, SAUCE metadata editing/export,
+variable width, remote service,
 accounts, plugins, or autosave. Node runs tooling, the local static/dev server,
 and optionally the agent broker, never a filesystem-access API. Unless agent
 access is enabled the page makes no application network requests; development

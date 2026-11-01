@@ -3,7 +3,8 @@
 ANSI Workshop makes old-school ANSI art from **CP437 characters** and classic
 BBS colors. Each cell holds a character, a foreground color, and a background
 color. The canvas is always **80 columns wide**, with no configured row limit.
-This is an art editor, not an animation tool or a full terminal emulator.
+It includes an experimental canned-transition mode, not a timeline or a full
+terminal emulator.
 
 **Save regularly. There is no autosave or recovery storage.** Art, undo history,
 and the internal clipboard disappear when you close or reload the page.
@@ -23,6 +24,7 @@ and the internal clipboard disappear when you close or reload the page.
 - [Navigate and adjust the display](#navigate-and-adjust-the-display)
 - [Keyboard reference](#keyboard-reference)
 - [Open and save artwork](#open-and-save-artwork)
+- [Try experimental Ansimation](#try-experimental-ansimation)
 - [Troubleshooting](#troubleshooting)
 - [Optional agent access](#optional-agent-access)
 
@@ -518,6 +520,61 @@ Before **File > New**, reload, or closing, save anything you want to keep.
 Warnings reduce accidental loss but are not a recovery system.
 Switching to another browser does not transfer the current art; save it first,
 then open the file in the other browser.
+
+## Try experimental Ansimation
+
+1. Draw or open your first art, and scroll to the section you want to animate.
+2. Choose **Window > Ansimation (experimental)**. The panel copies an **80x25**
+   screen starting at the current top row. Longer art is cropped, not resized.
+3. Pick **Effect**: wipe, cross-dissolve, flame, eraser down/across, spotlight,
+   Venetian blinds, iris reveal, digital rain, Neo, bullet holes, checkerboard, text spinner,
+   or text slide.
+4. For a transition between two arts, choose **Load second ANSI**. Its first 25
+   rows become the second layer. **Use single ANSI** returns to one-art effects.
+   With a single art, flame/erasers/bullet holes remove it; the other general effects reveal it.
+   Text effects use the current art only; a loaded second art remains available
+   when switching back to another effect.
+5. Choose **Preview speed**: 2.4k, 9.6k, 14.4k (default), 28.8k, 56k, or 115.2k.
+   **Frame detail** chooses 13, 37, or 73 steps for general transitions. Text
+   effects generate all letter steps automatically instead. Bullet holes also
+   uses automatic steps so each burst clears before the next impact. More steps can take
+   longer to transmit. **Play**, **Stop**, and **Replay** need no timeline.
+6. **Export ANSI** saves a separate `.ans` animation copy. Save your original
+   artwork separately: exporting a transition never marks the editor saved.
+
+Preview transmits the exported ANSI bytes, so you see partial character updates,
+not merely delayed screenshots. It approximates serial 8N1 (ten bits per byte);
+actual modem compression, buffering, and BBS output behavior can differ. Playback
+pauses in hidden tabs. Effects retain CP437 glyphs and DOS colors; cross-dissolve
+is a scattered cell dissolve, not smooth RGB blending.
+
+**Neo** reveals the art behind sparse falling, flickering light/dark green ASCII
+letters and numbers, with at most 20 rain columns across the screen.
+**Bullet holes** punches differently sized circles through the art, with blocks
+quickly flying outward, shrinking, and clearing before the next circle is removed.
+The holes remain open and eventually cover the whole screen. With a single art
+they reveal blank space; with two they reveal the next art underneath.
+**Text spinner** reveals each ASCII letter/digit after repeating the exact
+sequence `|/-\|/-\|` three times. **Text slide** brings each letter from the right edge to
+its original position. Both text effects proceed top-to-bottom, left-to-right,
+and keep punctuation, borders, shading, and accented/Greek glyphs fixed.
+Sliding letters can temporarily occupy blank spaces or unrevealed text, but
+hide behind decorative glyphs; background colors remain unchanged.
+All original text/colors are restored at the end. If no ASCII letters/digits
+are present, the panel explains that there is nothing to animate.
+Try lower modem speeds to make the spinner and sliding motion easier to see.
+
+**Plain .ans has no portable frame delays.** The selected preview speed is not
+stored in the download. Configure your BBS/player's output speed and an **80x25,
+CP437** screen; a fast viewer may show only the final art. Cursor-addressed
+updates avoid bottom-row newlines, but check your intended terminal. Reopening
+an exported animation here loads the final screen, not an editable animation.
+There is no video export, automatic looping, autosave, or recovery.
+
+Closing the panel cancels its work and returns to the unchanged editor.
+Sources/settings disappear when the panel closes; keep original files.
+Native export errors/cancellation remain visible, and download delivery cannot
+be verified by the editor.
 
 ## Troubleshooting
 

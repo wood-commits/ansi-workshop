@@ -25,7 +25,7 @@ export function contains(rect: Rect, point: Point): boolean {
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
 }
 function same(a: Cell, b: Cell): boolean { return a.code === b.code && a.fg === b.fg && a.bg === b.bg }
-function validateCell(cell: Cell): void {
+export function validateCell(cell: Cell): void {
   if (!Number.isInteger(cell.code) || cell.code < 32 || cell.code > 255 ||
       !Number.isInteger(cell.fg) || cell.fg < 0 || cell.fg >= ANSI_COLORS.length ||
       !Number.isInteger(cell.bg) || cell.bg < 0 || cell.bg >= BACKGROUND_COLORS.length) {

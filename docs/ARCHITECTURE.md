@@ -34,6 +34,8 @@ Reloading loses all in-memory state.
 | `src/fill.ts` | Shared sparse painted-region matching, shape recoloring, enclosed blank-area discovery and filling |
 | `src/move.ts` | All-color connected shape discovery and sparse, edge-clamped move overlays |
 | `src/export.ts` | Bounded binary ANSI/ASCII chunk generators, DOS-to-ANSI color conversion, shared sparse row ordering |
+| `src/ansimation.ts` | Bounded 80x25 snapshots, deterministic CP437 transitions, delta ANSI stream and byte-rate playback |
+| `src/AnsimationPanel.tsx` | Experimental modal controls, read-only second art, VGA rendering and separate animation-copy export |
 | `src/import.ts` | Streaming CP437/ANSI decoder, bounded control parsing, sparse cursor coordinates, cancellation |
 | `src/open.ts` | Browser-authorized native open picker and read-only file-input fallback |
 | `src/save.ts` | Native picker capability, streamed writable lifecycle, cancellation, bounded download fallback |
@@ -400,6 +402,82 @@ gaps use CRLF, not cursor-down commands that clamp within a terminal viewport.
 An extremely distant row can legitimately produce a very large file; Cancel
 save is important. ANSI viewers may scroll the final newline at the bottom of
 their viewport; the preview intentionally does not emulate those quirks.
+
+## Experimental Ansimation
+
+Window > Ansimation captures exactly 2000 validated cells from the current top
+row, using bounded map lookups instead of scanning/allocating document height.
+The second ANSI goes through the existing local picker/streaming parser, then
+only its first 25 rows are retained. No handles from loading are retained by the
+panel. Source snapshots are copied; model transactions, saved identity and the
+main save destination are never changed.
+
+`ansimation.ts` generates deterministic 80x25 frames. Single-art reveals start
+blank; flame/erasers/bullet holes start with art and end blank. General two-art effects start
+with the current snapshot and end with the second. Overlay glyphs/colors stay
+in the validated CP437/DOS ranges; dissolve uses cell selection, not RGB blending.
+Only bounded presentation frames are dense; documents/blocks/history stay sparse.
+
+Bullet holes uses fifteen deterministic, varied-radius circles arranged over
+the bounded screen. Vertical distances use the same 2:1 cell aspect correction
+as iris reveal. Radii cover each tile's corners while leaving other impact
+centers untouched, so each impact removes fresh art and their union covers the
+whole frame. The sequence starts centrally, then uses a stable shuffled order.
+Each impact has four mandatory steps: cut/initial blocks, outward blocks,
+farther smaller fragments, then no debris before the next cut. Eight fragments
+sample source foregrounds and retain the backgrounds beneath their positions;
+off-screen fragments are clipped. Earlier cuts remain open. The 61 frames
+(initial screen plus fifteen four-step bursts) are automatic; the panel hides
+frame detail for this effect while retaining second-art loading and modem speed.
+Preview/export use the same deterministic frames, without a final hard cut to
+hide leftover source art.
+
+Neo uses deterministic ASCII letters/digits and green foreground indexes 2/10
+in staggered falling trails, with one deterministic rain column per four-column
+group (at most 20 columns). Other columns still reveal the art beneath.
+Text spinner/slide are single-art-only and identify
+only ASCII byte ranges 48-57, 65-90, and 97-122. Their initial screen replaces
+these glyphs with spaces while preserving colors and all other glyphs. Letters
+complete sequentially in row-major order. Spinner repeats all nine bytes of
+`|/-\|/-\|` three times (27 steps), followed by the original letter.
+Slide advances one column per step,
+from column 80 to the letter's destination; moving letters may occupy blank
+spaces or hidden text cells, but decorative glyphs occlude them. Backgrounds
+come from the occupied position; completed letters keep their original colors.
+
+Text frame counts are derived from the bounded source, not the generic
+13/37/73-detail selector. A fully populated 80x25 screen needs 56,001 spinner
+frames or 81,001 slide frames including the initial screen. These are not stored:
+the text generator streams one/two-cell changes with a single bounded settled
+screen. Random-access `animationFrame` computes the same state from cumulative
+per-letter step counts, without replaying prior steps. Empty-text art emits only
+its unchanged screen and the panel explains why. Loaded second art is retained
+but excluded from text preview/export; switching back restores it.
+
+`animationChunks` emits reset/clear/home, changed-cell runs with absolute cursor
+positions and classic SGR reset/bold foreground colors, then reset and cursor
+position 25,1. It does not write newlines, a trailing printable byte after column
+80, arbitrary controls from art, or timing commands. General frame diffs and
+sparse text steps share the same cursor/color encoder. The fixed 80x25 viewport
+is an experimental output format, not a document line limit. Each chunk is
+bounded by a single frame; generation retains only adjacent frames.
+
+`AnsiPlayback` uses the same byte generator and streaming `AnsiDecoder`. Its
+read-only `screen` getter exposes partial results without calling `finish` in
+the middle of a split escape sequence. Serial 8N1 is approximated as ten bits
+per byte with fractional byte credit; React's RAF loop paints the partially
+decoded screen and pauses hidden tabs. Options stop/restart playback; no loops
+or timeline. General frame detail selects 13/37/73 steps; bullet holes and text
+effects include every mandatory step. Modem speed determines
+the preview's actual transmission time. Export embeds neither speed nor portable
+frame delays. Real terminals/BBS throttling, modem compression and buffering may
+look different; fast viewers show only the final screen.
+
+The modal aborts reads/writes on close/unmount, cancels scheduled rendering,
+contains keyboard shortcuts, and restores focus to Window. Errors/cancellation
+are visible. Export always chooses a separate browser-authorized destination,
+reusing `writeChunks`, including abort failure reporting and the download cap.
+It never marks the editor saved or claims a download reached disk.
 
 ## Open lifecycle
 

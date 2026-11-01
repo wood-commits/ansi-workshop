@@ -68,6 +68,16 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
   but browsers can bypass it. Native picker cancellation and download fallback
   are communicated distinctly from verified native close success.
 
+Experimental Ansimation uses copied, bounded 80x25 frames and the same validated
+CP437/color ranges. A second art file is read through the existing authorized
+picker/parser; its handle is not retained for writes. Animation export uses a
+separate authorized picker/download and the existing abortable writable lifecycle.
+Only fixed cursor/color controls are generated; user cell bytes cannot emit
+terminal controls. No timing scripts, player executable, new server route,
+network service, persistence, or additional dependencies are introduced.
+The browser preview simulates byte transmission speed, not an unrestricted
+terminal. ANSI playback compatibility/timing is not a security guarantee.
+
 ## Static hosting
 
 The browser build can be served from an HTTPS static host such as GitHub Pages,

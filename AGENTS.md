@@ -3,7 +3,9 @@
 ## Start here
 
 Read README.md, docs/ARCHITECTURE.md, and SECURITY.md before changing behavior.
-This is a local-only, 80-column CP437 ANSI editor. Animation is out of scope.
+This is a local-only, 80-column CP437 ANSI editor. Experimental canned
+transitions use bounded 80x25 frames; timelines and frame-by-frame editing
+remain out of scope.
 
 ## Invariants
 

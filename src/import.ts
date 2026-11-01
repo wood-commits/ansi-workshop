@@ -17,6 +17,8 @@ export class AnsiDecoder {
   private offset = 0
   private ended = false
 
+  get screen(): ReadonlyMap<string, Cell> { return this.cells }
+
   private fail(message: string): never {
     throw new Error(`${message} (byte ${this.offset}).`)
   }

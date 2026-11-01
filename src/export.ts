@@ -2,10 +2,11 @@ import { EMPTY, pointFromKey, type Cell } from './model'
 
 const escape = 27
 const ansiOrder = [0, 4, 2, 6, 1, 5, 3, 7]
-function sgr(cell: Cell): number[] {
-  const fg = (cell.fg < 8 ? 30 : 90) + ansiOrder[cell.fg % 8]
+export function sgr(cell: Cell, classicBright = false): number[] {
+  const fg = (cell.fg < 8 || classicBright ? 30 : 90) + ansiOrder[cell.fg % 8]
   const bg = 40 + ansiOrder[cell.bg]
-  return [escape, ...Array.from(`[${fg};${bg}m`, char => char.charCodeAt(0))]
+  const attributes = classicBright ? `0;${cell.fg >= 8 ? '1;' : ''}` : ''
+  return [escape, ...Array.from(`[${attributes}${fg};${bg}m`, char => char.charCodeAt(0))]
 }
 
 // Yield bounded byte chunks, including for very distant sparse rows.

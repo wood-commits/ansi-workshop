@@ -13,6 +13,8 @@ import { chooseFile, hasNativeSave, writeAnsi, writeAscii, type AnsiFileHandle }
 import { chooseAnsiFile } from './open'
 import { readAnsi } from './import'
 import { AgentPanel } from './AgentPanel'
+import { AnsimationPanel } from './AnsimationPanel'
+import { captureFrame, type AnimationFrame } from './ansimation'
 import { executeAgentCommand } from './agentCommands'
 import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
@@ -86,6 +88,7 @@ export function App() {
   const [selectionEnd, setSelectionEnd] = useState<Point>()
   const [clipboard, setClipboard] = useState<Block>()
   const [showPreview, setShowPreview] = useState(true)
+  const [ansimation, setAnsimation] = useState<{ source: AnimationFrame; top: number }>()
   const [cellSize, setCellSize] = useState<typeof CANVAS_SIZES[number]>(CANVAS_SIZES[0])
   const [font, setFont] = useState<CanvasFont>('ibm-vga')
   const [name, setName] = useState('untitled.ans')
@@ -100,6 +103,7 @@ export function App() {
   const infoDialog = useRef<HTMLDialogElement>(null)
   const settingsHeading = useRef<HTMLElement>(null)
   const helpHeading = useRef<HTMLElement>(null)
+  const windowHeading = useRef<HTMLElement>(null)
   const fileHandle = useRef<AnsiFileHandle | undefined>(undefined)
   const abortSave = useRef<AbortController | undefined>(undefined)
   const abortOpen = useRef<AbortController | undefined>(undefined)
@@ -528,8 +532,12 @@ export function App() {
         <button disabled={!selection} onClick={() => { if (selection) { editor.clear(selection); editor.commit(); refresh() } }}>Delete block</button>
         <button onClick={clearSelection} disabled={!selection}>Deselect <kbd>Esc</kbd></button>
       </div></details>
-      <details open={openMenu === 'Window'}><summary onMouseEnter={() => hoverMenu('Window')} onClick={event => toggleMenu(event, 'Window')}>Window</summary><div className="menu-popup" onClick={closeMenu}>
+      <details open={openMenu === 'Window'}><summary ref={windowHeading} onMouseEnter={() => hoverMenu('Window')} onClick={event => toggleMenu(event, 'Window')}>Window</summary><div className="menu-popup" onClick={closeMenu}>
         <button onClick={() => setShowPreview(value => !value)}>{showPreview ? 'Hide' : 'Show'} VGA Preview</button>
+        <button disabled={saving || opening} onClick={() => {
+          try { setAnsimation({ source: captureFrame(editor.cells, top), top }) }
+          catch (cause) { report(cause) }
+        }}>Ansimation (experimental)…</button>
       </div></details>
       <details open={openMenu === 'Settings'}><summary ref={settingsHeading} onMouseEnter={() => hoverMenu('Settings')} onClick={event => toggleMenu(event, 'Settings')}>Settings</summary>
         <div className="menu-popup settings-menu">
@@ -758,6 +766,10 @@ export function App() {
         </section>
       </aside>
     </main>
+    {ansimation && <AnsimationPanel source={ansimation.source} name={name} top={ansimation.top} onClose={() => {
+      setAnsimation(undefined)
+      windowHeading.current?.focus()
+    }} />}
     {error && <div role="alert" className="error-banner"><strong>Something needs attention:</strong> {error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
     <footer className="status-bar">
       <span className="cursor-position" aria-label="Cursor position">COL <strong>{String(cursor.x + 1).padStart(2, '0')}</strong> ROW <strong>{String(cursor.y + 1).padStart(2, '0')}</strong></span>
