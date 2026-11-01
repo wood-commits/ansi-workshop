@@ -241,9 +241,14 @@ without another click. Hovering with all menus closed does not open one.
   foreground color on a matching connected region, using the same color and
   block-family matching as Gradient. Shading becomes solid full blocks; half
   blocks, text glyphs, and original backgrounds stay intact. Fill enclosed blank
-  area paints only default blank cells inside a closed outline with full blocks
+  area paints default blank cells inside a closed outline with full blocks
   in the selected foreground color (not the brush glyph or selected background).
-  Stored cells, including colored spaces and half blocks, are whole-cell barriers.
+  It also fills connected black background halves of upper/lower/left/right
+  blocks, preserving the painted outline and its colors. Matching colors merge
+  into full blocks; other colors retain half blocks (with reversed glyph/inks
+  when needed). Colored spaces, nonblack backgrounds, and other glyphs remain
+  barriers. Classic ANSI cannot put two different bright colors in one cell;
+  such fills fail without changes. Use a nonbright fill or an iCE document.
   The outline must be closed on all sides: an area reaching the canvas's
   top/side edges or a completely empty row is rejected without changing art.
   One click is one undo step; dragging does not fill additional regions.

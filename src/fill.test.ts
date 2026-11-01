@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bucketFill } from './fill'
 import { ansiChunks } from './export'
+import { rgbColor } from './colors'
 import { Editor, key, MAX_ROW, pointFromKey, type Cell } from './model'
 
 const wall = { code: 219, fg: 7, bg: 0 }
@@ -61,6 +62,86 @@ describe('paint bucket', () => {
     for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) diagonal.set(key(x, y), wall)
     diagonal.delete('1,1'); diagonal.delete('2,2')
     expect([...bucketFill(diagonal, { x: 1, y: 1 }, 'enclosed', 3).keys()]).toEqual(['1,1'])
+  })
+
+  it('fills the blank halves along all four edges without changing the outline colors', () => {
+    const cells = outline(2, 2, 6, 6)
+    for (let x = 3; x < 6; x++) {
+      cells.set(key(x, 2), { code: 223, fg: 7, bg: 0 })
+      cells.set(key(x, 6), { code: 220, fg: 7, bg: 0 })
+    }
+    for (let y = 3; y < 6; y++) {
+      cells.set(key(2, y), { code: 221, fg: 7, bg: 0 })
+      cells.set(key(6, y), { code: 222, fg: 7, bg: 0 })
+    }
+    const editor = new Editor(cells)
+    const result = bucketFill(editor.cells, { x: 4, y: 4 }, 'enclosed', 14)
+    expect(result.size).toBe(21)
+    for (const [id, cell] of result) editor.paint(pointFromKey(id), cell)
+    editor.commit()
+    expect(editor.cell({ x: 4, y: 2 })).toEqual({ code: 220, fg: 14, bg: 7 })
+    expect(editor.cell({ x: 4, y: 6 })).toEqual({ code: 223, fg: 14, bg: 7 })
+    expect(editor.cell({ x: 2, y: 4 })).toEqual({ code: 222, fg: 14, bg: 7 })
+    expect(editor.cell({ x: 6, y: 4 })).toEqual({ code: 221, fg: 14, bg: 7 })
+    expect(editor.cell({ x: 4, y: 4 })).toEqual({ code: 219, fg: 14, bg: 0 })
+    const filled = new Map(editor.cells)
+    editor.undo()
+    expect(editor.cells).toEqual(cells)
+    editor.redo()
+    expect(editor.cells).toEqual(filled)
+  })
+
+  it('merges matching half-block colors into solid cells and preserves colored backgrounds', () => {
+    const cells = outline(1, 1, 5, 5)
+    cells.set('2,1', { code: 223, fg: 7, bg: 0 })
+    cells.set('3,1', { code: 223, fg: 7, bg: 2 })
+    const result = bucketFill(cells, { x: 3, y: 3 }, 'enclosed', 7)
+    expect(result.get('2,1')).toEqual({ code: 219, fg: 7, bg: 0 })
+    expect(result.has('3,1')).toBe(false)
+  })
+
+  it('detects openings through half blocks rather than treating their cells as solid walls', () => {
+    for (const [code, x, y] of [[221, 3, 1], [222, 3, 1], [223, 1, 3], [220, 1, 3]]) {
+      const cells = outline(1, 1, 5, 5)
+      cells.set(key(x, y), { code, fg: 7, bg: 0 })
+      expect(() => bucketFill(cells, { x: 3, y: 3 }, 'enclosed', 14)).toThrow(/not enclosed/)
+      expect(cells.get('3,3')).toBeUndefined()
+    }
+  })
+
+  it('does not join blank halves that meet only at a corner', () => {
+    const cells = outline(1, 1, 5, 5)
+    cells.set('2,2', { code: 223, fg: 7, bg: 0 })
+    cells.set('3,2', { code: 220, fg: 7, bg: 0 })
+    cells.set('2,3', wall)
+    cells.set('3,3', wall)
+    cells.set('1,2', { code: 222, fg: 7, bg: 0 })
+    const result = bucketFill(cells, { x: 4, y: 3 }, 'enclosed', 7)
+    expect(result.has('3,2')).toBe(true)
+    expect(result.has('2,2')).toBe(false)
+    expect(result.has('1,2')).toBe(false)
+  })
+
+  it('retains bright and RGB boundary inks with format-valid half-block encoding', () => {
+    const cells = outline(1, 1, 5, 5)
+    cells.set('3,1', { code: 223, fg: 14, bg: 0 })
+    expect(bucketFill(cells, { x: 3, y: 3 }, 'enclosed', 4).get('3,1')).toEqual({ code: 223, fg: 14, bg: 4 })
+    expect(() => bucketFill(cells, { x: 3, y: 3 }, 'enclosed', 12)).toThrow(/two bright colors/)
+    expect(bucketFill(cells, { x: 3, y: 3 }, 'enclosed', 12, 'ice').get('3,1')).toEqual({ code: 223, fg: 14, bg: 12 })
+    const border = rgbColor('#123456'), fill = rgbColor('#abcdef')
+    cells.set('3,1', { code: 223, fg: border, bg: 0 })
+    expect(bucketFill(cells, { x: 3, y: 3 }, 'enclosed', fill, 'tundra').get('3,1')).toEqual({ code: 223, fg: border, bg: fill })
+  })
+
+  it('fills half-block enclosures without doubling absolute safe row coordinates', () => {
+    for (const top of [0, 1_000_000_000, MAX_ROW - 4]) {
+      const cells = outline(2, top, 6, top + 4)
+      cells.set(key(4, top), { code: 223, fg: 7, bg: 0 })
+      cells.set(key(4, top + 4), { code: 220, fg: 7, bg: 0 })
+      const result = bucketFill(cells, { x: 4, y: top + 2 }, 'enclosed', 7)
+      expect(result.size).toBe(11)
+      expect(result.get(key(4, top))).toEqual({ code: 219, fg: 7, bg: 0 })
+    }
   })
 
   it('rejects open outlines, the outside area, and a completely blank document before editing', () => {
@@ -141,6 +222,19 @@ describe('paint bucket', () => {
     const cells = bucketFill(outline(0, 0, 2, 2), { x: 1, y: 1 }, 'enclosed', 14)
     expect([...ansiChunks(cells)].flatMap(chunk => [...chunk])).toEqual([
       27, 91, 48, 109, 27, 91, 50, 74, 27, 91, 72, 13, 10, 32,
+      27, 91, 57, 51, 59, 52, 48, 109, 219,
+      27, 91, 48, 109, 13, 10, 27, 91, 48, 109,
+    ])
+  })
+
+  it('exports a filled half-block boundary as exact CP437 bytes with valid classic inks', () => {
+    const cells = outline(0, 0, 2, 2)
+    cells.set('1,0', { code: 223, fg: 7, bg: 0 })
+    const result = bucketFill(cells, { x: 1, y: 1 }, 'enclosed', 14)
+    expect([...ansiChunks(result)].flatMap(chunk => [...chunk])).toEqual([
+      27, 91, 48, 109, 27, 91, 50, 74, 27, 91, 72, 32,
+      27, 91, 57, 51, 59, 52, 55, 109, 220,
+      27, 91, 48, 109, 13, 10, 32,
       27, 91, 57, 51, 59, 52, 48, 109, 219,
       27, 91, 48, 109, 13, 10, 27, 91, 48, 109,
     ])

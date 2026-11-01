@@ -315,15 +315,22 @@ agent exclusion, and document replacement follow the primitive lifecycle.
 Fill and Gradient share `paintedRegion` from `fill.ts` (also re-exported as
 `gradientRegion`). Shape recoloring sets FG without changing BG or the glyph,
 except that shading bytes 176-178 become full blocks. The selected brush and
-BG are not used. Enclosed mode targets only missing/default cells; all stored
-cells, including colored spaces and half blocks, are whole-cell barriers.
-Blank discovery scans horizontal runs between stored cells, recording their
-four-connected neighbors. Runs touching row zero or either side edge, or
-entering a row with no stored cells, are unenclosed and fail visibly. Thus an
+BG are not used. Enclosed mode starts on a missing/default cell and traverses
+default cells plus black background halves of the four half-block glyphs.
+Each available area is a local unit-cell rectangle; neighboring areas connect
+only across a shared edge of positive length, never a corner. Colored spaces,
+nonblack backgrounds, and other glyphs remain whole-cell barriers.
+Available areas touching the top or either side edge, or entering a row with
+no stored cells, are unenclosed and fail visibly. Thus an
 escape into a billion-row blank gap is rejected without scanning the gap.
-Enclosure/coordinate validation finishes before allocating painted cells or
-writing the model. Accepted runs become foreground-colored full blocks with
-default BG, committed in one transaction. Discovery stays proportional to
+Coordinates are never doubled, preserving maximum-safe-row precision.
+Enclosure/coordinate validation finishes before writing the model.
+Default cells become full blocks with default BG. Reached half-block backgrounds
+receive the fill ink without changing the outline color, merging equal inks
+into full blocks or reversing glyph/inks to keep classic backgrounds valid.
+Two different bright inks cannot coexist in a classic half block and fail
+explicitly before any model writes; iCE/RGB use their existing palette bounds.
+The entire fill commits in one transaction. Discovery stays proportional to
 stored art plus the connected area, never a document-height array.
 
 Fill and Eyedropper use single-click pointer dispatch without capture; movement,

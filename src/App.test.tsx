@@ -1142,6 +1142,39 @@ describe('editor UI', () => {
     expect(await saveSnapshot()).toEqual(expected)
   })
 
+  it('fills a half-block outline without gaps and undoes the boundary and interior together', async () => {
+    const source = new Map<string, Cell>()
+    for (let x = 1; x <= 5; x++) {
+      source.set(`${x},1`, { code: x === 1 || x === 5 ? 219 : 223, fg: 7, bg: 0 })
+      source.set(`${x},5`, { code: x === 1 || x === 5 ? 219 : 220, fg: 7, bg: 0 })
+    }
+    for (let y = 2; y < 5; y++) {
+      source.set(`1,${y}`, { code: 219, fg: 7, bg: 0 })
+      source.set(`5,${y}`, { code: 219, fg: 7, bg: 0 })
+    }
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor()
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground Light gray' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }))
+    fireEvent.change(screen.getByLabelText('Fill behavior'), { target: { value: 'enclosed' } })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 77, clientY: 65 })
+    fireEvent.pointerUp(canvas())
+    const filled = await saveSnapshot()
+    expect(filled.size).toBe(25)
+    for (let x = 1; x <= 5; x++) {
+      expect(filled.get(`${x},1`)).toEqual({ code: 219, fg: 7, bg: 0 })
+      expect(filled.get(`${x},5`)).toEqual({ code: 219, fg: 7, bg: 0 })
+    }
+    expect(filled.get('3,3')).toEqual({ code: 219, fg: 7, bg: 0 })
+    expect(filled.get('1,0')).toBeUndefined()
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(filled)
+  })
+
   it('reports an unenclosed bucket target without editing or disturbing redo', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     renderClassicEditor()

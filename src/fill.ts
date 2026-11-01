@@ -1,4 +1,4 @@
-import { BLOCK_GLYPHS } from './ansi'
+import { BLOCK_GLYPHS, flipCharacter } from './ansi'
 import { validColor, type DocumentFormat } from './colors'
 import { EMPTY, key, MAX_ROW, pointFromKey, validPoint, WIDTH, type Cell, type Point, type Rect } from './model'
 
@@ -39,32 +39,56 @@ export function paintedRegion(cells: ReadonlyMap<string, Cell>, start: Point, ma
   return region
 }
 
-function enclosedBlankSpans(cells: ReadonlyMap<string, Cell>, start: Point, width: number): Rect[] {
+function blankArea(cell: Cell | undefined): Rect | undefined {
+  if (!cell) return { left: 0, top: 0, right: 1, bottom: 1 }
+  if (cell.bg !== EMPTY.bg || cell.code === 219) return undefined
+  const block = BLOCK_GLYPHS.get(flipCharacter(cell.code, cell.code === 221 || cell.code === 222 ? 'x' : 'y'))
+  if (!block) return undefined
+  const [left, top, width, height] = block
+  return { left, top, right: left + width, bottom: top + height }
+}
+
+function enclosedBlankRegion(cells: ReadonlyMap<string, Cell>, start: Point, width: number): ReadonlySet<string> {
   if (cells.has(key(start.x, start.y))) throw new Error('Click a default blank cell inside a closed outline, or choose Recolor shape.')
-  const rows = new Map<number, Set<number>>()
-  for (const id of cells.keys()) {
-    const { x, y } = pointFromKey(id)
-    let row = rows.get(y)
-    if (!row) { row = new Set(); rows.set(y, row) }
-    row.add(x)
-  }
-  const spans: Rect[] = [], queue = [start], seen = new Set<string>()
+  const rows = new Set<number>()
+  for (const id of cells.keys()) rows.add(pointFromKey(id).y)
+  const queue = [start], seen = new Set([key(start.x, start.y)])
   for (let i = 0; i < queue.length; i++) {
     const point = queue[i], id = key(point.x, point.y)
-    if (seen.has(id) || cells.has(id)) continue
     validatePoint(point, width)
-    const row = rows.get(point.y)
+    const area = blankArea(cells.get(id))
+    if (!area) throw new Error('Fill traversal reached a nonblank cell.')
     // A row with no art is open across the document, regardless of distant rows.
-    if (!row || point.y === 0) throw new Error('The blank area is not enclosed. Close the outline before filling.')
-    let left = point.x, right = point.x
-    while (left > 0 && !row.has(left - 1)) left--
-    while (right < width - 1 && !row.has(right + 1)) right++
-    if (left === 0 || right === width - 1) throw new Error('The blank area is not enclosed. Close the outline before filling.')
-    spans.push({ left, right, top: point.y, bottom: point.y })
-    for (let x = left; x <= right; x++) seen.add(key(x, point.y))
-    for (let x = left; x <= right; x++) queue.push({ x, y: point.y - 1 }, { x, y: point.y + 1 })
+    if (!rows.has(point.y) || (point.y === 0 && area.top === 0) ||
+        (point.x === 0 && area.left === 0) || (point.x === width - 1 && area.right === 1)) {
+      throw new Error('The blank area is not enclosed. Close the outline before filling.')
+    }
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      if ((dx === -1 && area.left !== 0) || (dx === 1 && area.right !== 1) ||
+          (dy === -1 && area.top !== 0) || (dy === 1 && area.bottom !== 1)) continue
+      const neighbor = { x: point.x + dx, y: point.y + dy }, neighborId = key(neighbor.x, neighbor.y)
+      if (seen.has(neighborId)) continue
+      validatePoint(neighbor, width)
+      const other = blankArea(cells.get(neighborId))
+      if (!other) continue
+      const connected = dx !== 0
+        ? (dx === -1 ? other.right === 1 : other.left === 0) &&
+          Math.max(area.top, other.top) < Math.min(area.bottom, other.bottom)
+        : (dy === -1 ? other.bottom === 1 : other.top === 0) &&
+          Math.max(area.left, other.left) < Math.min(area.right, other.right)
+      if (connected) { seen.add(neighborId); queue.push(neighbor) }
+    }
   }
-  return spans
+  return seen
+}
+
+function filledBlank(cell: Cell | undefined, fg: number, format: DocumentFormat): Cell {
+  if (!cell || cell.fg === fg) return { code: 219, fg, bg: EMPTY.bg }
+  if (validColor(fg, true, format)) return { ...cell, bg: fg }
+  if (validColor(cell.fg, true, format)) {
+    return { code: flipCharacter(cell.code, cell.code === 221 || cell.code === 222 ? 'x' : 'y'), fg, bg: cell.fg }
+  }
+  throw new Error('Classic ANSI cannot retain two bright colors in one half-block cell. Choose a nonbright fill color or use an iCE document.')
 }
 
 export function bucketFill(cells: ReadonlyMap<string, Cell>, start: Point, mode: FillMode, fg: number, format: DocumentFormat = 'ansi', width = WIDTH): ReadonlyMap<string, Cell> {
@@ -76,10 +100,8 @@ export function bucketFill(cells: ReadonlyMap<string, Cell>, start: Point, mode:
       result.set(id, { ...cell, code: cell.code >= 176 && cell.code <= 178 ? 219 : cell.code, fg })
     }
   } else {
-    const spans = enclosedBlankSpans(cells, start, width)
-    for (const span of spans) for (let x = span.left; x <= span.right; x++) {
-      result.set(key(x, span.top), { code: 219, fg, bg: EMPTY.bg })
-    }
+    const region = enclosedBlankRegion(cells, start, width)
+    for (const id of region) result.set(id, filledBlank(cells.get(id), fg, format))
   }
   return result
 }

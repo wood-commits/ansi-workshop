@@ -382,8 +382,13 @@ Dragging does not fill additional regions.
 The screenshot keeps **Background Blue** selected from the Gradient walkthrough;
 the fill still uses green full blocks rather than painting blue backgrounds.
 
-This mode paints only default blank cells inside a closed outline.
-Colored spaces and half blocks act as whole-cell barriers. An opening to the
+This mode paints default blank cells inside a closed outline, including connected
+black background halves of upper/lower/left/right half blocks. It preserves the
+painted outline and its colors; matching fill and outline colors become full
+blocks. Colored spaces, nonblack backgrounds, and other glyphs remain barriers.
+Classic ANSI cannot retain two different bright colors in one half-block cell:
+choose a nonbright fill color or use an iCE document if that error appears.
+An opening through a blank half to the
 canvas's top or side edges, or an entirely empty row, means the area is not
 enclosed. The app reports an error and changes nothing; close the gap and retry.
 
