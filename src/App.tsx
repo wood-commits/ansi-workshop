@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ANSI_COLORS, BACKGROUND_COLORS, COLOR_NAMES, CP437, PALETTES, characterCode } from './ansi'
 import { colorCss, colorName, type DocumentFormat } from './colors'
 import { TundraColors } from './TundraColors'
@@ -24,7 +24,7 @@ import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
 import editorLicense from '../LICENSE?raw'
 import { version } from '../package.json'
-import { loadSettings, saveSettings, type Settings } from './settings'
+import { APP_THEMES, isAppTheme, loadSettings, saveSettings, type Settings } from './settings'
 
 const RELEASE_VERSION = version.split('.').slice(0, 2).join('.')
 
@@ -147,7 +147,11 @@ export function App() {
   const [ansimation, setAnsimation] = useState<{ source: AnimationFrame; top: number }>()
   const [showSauce, setShowSauce] = useState(false)
   const [settings, setSettings] = useState(initialSettings.settings)
-  const { font, nativeWidth, ansiMode, collapseHeader, iconOnlyToolbar } = settings
+  const { theme, font, nativeWidth, ansiMode, collapseHeader, iconOnlyToolbar } = settings
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme
+    return () => { delete document.documentElement.dataset.theme }
+  }, [theme])
   const cellSize = CANVAS_SIZES.find(size => size.id === settings.cellSize) ?? CANVAS_SIZES[0]
   const [columns, setColumns] = useState(String(initialSettings.settings.columns))
   useEffect(() => {
@@ -856,6 +860,12 @@ export function App() {
       </div></details>
       <details open={openMenu === 'Settings'}><summary ref={settingsHeading} onMouseEnter={() => hoverMenu('Settings')} onClick={event => toggleMenu(event, 'Settings')}>Settings</summary>
         <div className="menu-popup settings-menu">
+          <label>App theme<select aria-label="App theme" value={theme} onChange={event => {
+            const value = event.target.value
+            if (isAppTheme(value)) updateSettings({ theme: value })
+            else report(new Error('Unknown app theme.'))
+          }}>{APP_THEMES.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+          <p className="settings-section-end">Changes the app controls only; artwork and exported colors stay unchanged.</p>
           <div className="menu-label settings-section">Small screens</div>
           <label className="checkbox-setting"><input type="checkbox" checked={collapseHeader}
             onChange={event => updateSettings({ collapseHeader: event.target.checked })} />Collapse ANSI Workshop header</label>
@@ -1079,7 +1089,7 @@ export function App() {
     <main className={`workspace${showSidebar ? '' : ' sidebar-collapsed'}`}>
       <section className="editor-panel" aria-label="Screen editor">
         <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>{editor.width} × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : ice ? 'ANSI (iCE Colors)' : 'ANSI'}</span></span></div>
-        <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth}
+        <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth} theme={theme}
           primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode} onDoublePoint={tool === 'path' ? doublePoint : undefined}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
           halfBlock={tool === 'draw' && drawMode === 'half'}
@@ -1099,7 +1109,7 @@ export function App() {
               title={value === undefined ? 'Unassigned' : `F${index + 1}: CP437 ${value}`}
               onClick={() => { if (value !== undefined) setCode(value) }}>
               <kbd>F{index + 1}</kbd><span>{value === undefined ? '–'
-                : <ShadeGlyph code={value} color={code === value ? '#c4ee86' : '#dce5f1'} font={font} nativeWidth={nativeWidth} />}</span>
+                : <ShadeGlyph code={value} color="currentColor" theme={theme} font={font} nativeWidth={nativeWidth} />}</span>
             </button>
           })}</div>
         </section>
@@ -1107,7 +1117,7 @@ export function App() {
           <div className="character-grid">{CP437.slice(32).map((_glyph, index) => <button key={index + 32}
             aria-label={`CP437 ${index + 32}`} aria-pressed={code === index + 32} title={`CP437 ${index + 32}`}
             onClick={() => setCode(index + 32)}>{index + 32 === 32 || index + 32 === 255 ? '␣'
-              : <ShadeGlyph code={index + 32} color={code === index + 32 ? '#c4ee86' : '#cbd4e2'} width={8} height={16} font={font} nativeWidth={nativeWidth} />}</button>)}</div>
+              : <ShadeGlyph code={index + 32} color="currentColor" theme={theme} width={8} height={16} font={font} nativeWidth={nativeWidth} />}</button>)}</div>
         </details>
       </section>
       <aside className="sidebar" id="editor-sidebar" hidden={!showSidebar}>

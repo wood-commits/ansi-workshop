@@ -509,6 +509,12 @@ The VGA preview also supports drag-to-select, regardless of the active tool.
   Preview scrollbar track clicks and Page Up/Down move by 60 rows without
   moving the cursor or editing art. Live shape placement pauses scrolling.
   It supports canvas keyboard shortcuts too.
+- **Settings > App theme** offers **Original (default)**, **Light**, **Midnight**,
+  **Forest**, and **Amber**. Original preserves the existing dark appearance.
+  Themes apply to app controls, menus, panels and dialogs, never artwork,
+  palette colors, previews or exported files.
+  The canvas surround and row-number gutter also follow the theme; the artwork
+  itself keeps its original background colors.
 - In **Settings**, independently choose **IBM VGA 8x16** or **Consolas**, and
   **Pixel perfect (8x16)**, **1.25x (10x20)**, or **2x (16x32)** cell size.
   Display changes do not modify the document or its saved state.
@@ -533,8 +539,8 @@ On small screens, **Settings > Collapse ANSI Workshop header** hides the brand
 header and shows the document name in the menu bar, and **Settings > Icon-only
 toolbar buttons** hides button labels so the toolbar wraps less. Hover a button
 for its name.
-The seven **Settings** menu options (font, cell size, character width, New/Open
-columns, ANSI mode, collapsed header and icon-only toolbar) survive reload in this browser's local storage, separately
+The eight **Settings** menu options (app theme, font, cell size, character width,
+New/Open columns, ANSI mode, collapsed header and icon-only toolbar) survive reload in this browser's local storage, separately
 for each site origin (including dev/preview ports). New/Open defaults never
 resize or change the current document. Invalid column drafts retain the last
 valid saved value. Invalid/unavailable storage shows an error and uses defaults;

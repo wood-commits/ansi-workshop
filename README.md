@@ -148,6 +148,10 @@ without another click. Hovering with all menus closed does not open one.
   Skipped pointer positions are interpolated, and each drag is one undo step.
   Alt+click only positions the cursor; keyboard editing and preview navigation
   keep their usual behavior.
+- **Settings > App theme:** choose Original (default, the existing dark look),
+  Light, Midnight (blue/violet), Forest (green), or Amber (warm brown/gold).
+  Themes change app controls, menus, panels and dialogs only; artwork, palette
+  colors, previews and exported files stay unchanged.
 - **Settings:** choose IBM VGA 8x16 (the default) or Consolas, and independently
   choose Pixel perfect (8x16, the default), 1.25x (10x20), or 2x (16x32) cells.
   Pixel perfect and 1.25x adjust their visible row count to the available
@@ -163,8 +167,8 @@ without another click. Hovering with all menus closed does not open one.
   Smaller windows scroll horizontally without shrinking the art; the column
   ruler stays aligned. The selected font also applies to the VGA preview,
   function-key palette, all-characters drawer, and brush sample.
-  The seven Settings menu options (font, cell size, character width, New/Open
-  columns, ANSI mode, collapsed header and icon-only toolbar) survive reload in this browser's local storage.
+  The eight Settings menu options (app theme, font, cell size, character width,
+  New/Open columns, ANSI mode, collapsed header and icon-only toolbar) survive reload in this browser's local storage.
   Preferences are separate for each site origin, including dev and preview ports.
   Invalid or unavailable storage shows an error and uses defaults; failed writes
   leave settings usable for the session. Invalid column drafts do not replace the

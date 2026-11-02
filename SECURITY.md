@@ -85,10 +85,11 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
 - Unsaved art is not persisted. A close/reload warning reduces accidental loss
   but browsers can bypass it. Native picker cancellation and download fallback
   are communicated distinctly from verified native close success.
-- Only the seven Settings menu preferences (font, cell size, character width,
+- Only the eight Settings menu preferences (app theme, font, cell size, character width,
   New/Open columns, ANSI mode, collapsed header and icon-only toolbar) are persisted in origin-scoped localStorage.
   A versioned whitelist validates stored types and ranges before use and rejects
-  oversized or unsupported records. Read/write failures are logged and shown;
+  oversized or unsupported records. Theme IDs are a fixed local whitelist, not
+  user-provided CSS or remote assets. Read/write failures are logged and shown;
   editing remains available with defaults or session-only changes. No artwork,
   metadata, history, clipboard, swatches, file handles or agent credentials are
   stored. Browser site-data clearing resets preferences; this is not autosave

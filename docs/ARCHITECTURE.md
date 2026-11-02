@@ -20,10 +20,11 @@ browser file picker, subject to browser write permission. The download fallback 
 temporary object URL. New documents forget the previous handle but preserve
 the brush/clipboard preferences. Opening replaces the handle with the selected
 file's native handle, or clears it for read-only file-input fallback.
-Reloading loses all in-memory state except the seven Settings menu preferences:
-canvas font, cell size, character width, New/Open columns, ANSI mode, collapsed
-header and icon-only toolbar. Version 1 records (without the two layout booleans)
-load with both layout options off; writes use version 2.
+Reloading loses all in-memory state except the eight Settings menu preferences:
+app theme, canvas font, cell size, character width, New/Open columns, ANSI mode,
+collapsed header and icon-only toolbar. Version 1 records (without the two layout
+booleans) load with both layout options off. Version 1 and 2 records load with the
+original theme; writes use version 3.
 These are stored under `ansi-workshop.settings` in origin-scoped localStorage,
 with a versioned, bounded, strictly validated whitelist. Missing storage uses
 defaults; malformed/unsupported storage and read/write failures are logged and
@@ -32,6 +33,18 @@ Only preference changes write; invalid column drafts preserve the last valid
 column preference. Reload still creates a default 80-column classic document;
 saved New/Open options apply only on those commands. No art, handles, tokens,
 clipboard, swatches, tools or preview visibility are stored.
+
+The theme is a validated fixed ID (Original/default, Light, Midnight, Forest,
+Amber). App applies it to the HTML root before paint; CSS semantic color tokens
+cover controls, menus, panels, scrollbars and top-layer dialogs. Original uses
+the existing color values. Character-picker bitmap samples repaint using their
+CSS currentColor when the theme changes; brush samples retain document ink.
+The canvas surround and row-number gutter follow the theme; gutter background
+and text use the same surface/subtle tokens as the column ruler, with the
+original gutter colors preserved for Original. Theme changes invalidate the
+bounded main raster and its cursor composite, not document state.
+Themes do not remount the document or change artwork colors, preview inks,
+history, dirty state or exports.
 
 ## Modules
 

@@ -73,6 +73,34 @@ const preview = () => screen.getByLabelText(/^Live VGA preview/)
 const press = (key: string, extra = {}) => fireEvent.keyDown(canvas(), { key, ...extra })
 describe('persistent Settings menu preferences', () => {
   const settings = () => fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+  it('switches and restores app themes without remounting or editing the artwork', () => {
+    const first = render(<App />)
+    expect(document.documentElement.dataset.theme).toBe('default')
+    press('A')
+    const art = canvas()
+    settings()
+    const picker = screen.getByRole('combobox', { name: 'App theme' })
+    expect(within(picker).getAllByRole('option').map(option => option.textContent)).toEqual([
+      'Original (default)', 'Light', 'Midnight', 'Forest', 'Amber',
+    ])
+    for (const theme of ['light', 'midnight', 'forest', 'amber', 'default']) {
+      fireEvent.change(picker, { target: { value: theme } })
+      expect(document.documentElement.dataset.theme).toBe(theme)
+      expect(canvas()).toBe(art)
+    }
+    settings()
+    press('z', { ctrlKey: true })
+    expect(screen.queryByText('untitled.ans *')).toBeNull()
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+    settings()
+    fireEvent.change(picker, { target: { value: 'light' } })
+    first.unmount()
+    render(<App />)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    settings()
+    expect(screen.getByLabelText('App theme')).toHaveProperty('value', 'light')
+  })
+
   it('restores only Settings options without restoring art, tools, preview visibility or document dimensions', () => {
     const first = render(<App />)
     settings()
@@ -121,10 +149,12 @@ describe('persistent Settings menu preferences', () => {
     vi.spyOn(Object.getPrototypeOf(window.localStorage), 'getItem').mockImplementation(() => { throw new DOMException('Blocked', 'SecurityError') })
     render(<App />)
     expect(screen.getByRole('alert').textContent).toContain('Settings could not be loaded')
+    expect(document.documentElement.dataset.theme).toBe('default')
     vi.spyOn(Object.getPrototypeOf(window.localStorage), 'setItem').mockImplementation(() => { throw new DOMException('Full', 'QuotaExceededError') })
     settings()
-    fireEvent.change(screen.getByLabelText('Canvas font'), { target: { value: 'consolas' } })
+    fireEvent.change(screen.getByLabelText('App theme'), { target: { value: 'light' } })
     expect(screen.getByRole('alert').textContent).toContain('Settings could not be saved')
+    expect(document.documentElement.dataset.theme).toBe('light')
     settings()
     fireEvent.pointerDown(canvas(), { button: 0, clientX: 46, clientY: 8 })
     fireEvent.pointerUp(canvas(), { clientX: 46, clientY: 8 })
@@ -1197,6 +1227,12 @@ describe('editor UI', () => {
   })
 
   it('reuses both art rasters for cursor-only movement, including an unchanged selection', () => {
+    const computedStyle = window.getComputedStyle
+    vi.spyOn(window, 'getComputedStyle').mockImplementation(element => {
+      const style = computedStyle(element)
+      if (element.classList.contains('shade-glyph')) Object.defineProperty(style, 'color', { value: '#dce5f1' })
+      return style
+    })
     const ctx = {
       fillStyle: '#aaa', clearRect: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), drawImage: vi.fn(),
       strokeRect: vi.fn(), createPattern: vi.fn(() => ({ setTransform: vi.fn() })),

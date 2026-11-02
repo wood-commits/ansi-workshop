@@ -1,5 +1,61 @@
-import { describe, expect, it, vi } from 'vitest'
-import { drawGlyph } from './Canvas'
+import { createElement } from 'react'
+import { cleanup, render } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ArtCanvas, drawGlyph, ShadeGlyph } from './Canvas'
+import { Editor } from './model'
+
+describe('themed glyph samples', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+  it('repaints themed row gutters while preserving black document cells', () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+    const fills: { color: CanvasRenderingContext2D['fillStyle']; x: number; width: number }[] = []
+    const labels: CanvasRenderingContext2D['fillStyle'][] = []
+    const context: Partial<CanvasRenderingContext2D> = {
+      fillStyle: '', drawImage: vi.fn(), strokeRect: vi.fn(),
+      fillRect: (x, _y, width) => { fills.push({ color: context.fillStyle!, x, width }) },
+      fillText: () => { labels.push(context.fillStyle!) },
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as CanvasRenderingContext2D)
+    const editor = new Editor()
+    const props = {
+      editor, tool: 'draw' as const, revision: 0, cursor: { x: 0, y: 0 }, top: 0,
+      selection: undefined, selecting: false, navigating: false, font: 'consolas' as const,
+      onNavigate: vi.fn(), onPoint: vi.fn(), onEnd: vi.fn(), onScroll: vi.fn(), onKey: vi.fn(), onRows: vi.fn(),
+    }
+    const view = render(createElement(ArtCanvas, { ...props, theme: 'default' }))
+    const canvas = view.getByLabelText(/^ANSI canvas/)
+    for (const [theme, background, text] of [
+      ['light', '#ffffff', '#526179'], ['forest', '#16271f', '#9ab7a8'], ['default', '#121821', '#657184'],
+    ] as const) {
+      canvas.style.setProperty('--surface', background)
+      canvas.style.setProperty('--subtle', text)
+      fills.length = 0; labels.length = 0
+      view.rerender(createElement(ArtCanvas, { ...props, theme }))
+      expect(view.getByLabelText(/^ANSI canvas/)).toBe(canvas)
+      expect(fills).toContainEqual({ color: background, x: 0, width: 42 })
+      expect(labels.length).toBeGreaterThan(0)
+      expect(labels.every(color => color === text)).toBe(true)
+      expect(fills.some(fill => fill.x === 42 && fill.width === 8 && /^#0+$/.test(String(fill.color)))).toBe(true)
+      expect(editor.cells.size).toBe(0)
+    }
+  })
+
+  it('repaints currentColor samples when the app theme changes', () => {
+    const context: Pick<CanvasRenderingContext2D, 'clearRect' | 'fillRect' | 'fillStyle'> = {
+      clearRect: vi.fn(), fillRect: vi.fn(), fillStyle: '',
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as CanvasRenderingContext2D)
+    const props = { code: 219, color: 'currentColor', font: 'consolas' as const }
+    const sample = render(createElement('div', { style: { color: '#c4ee86' } },
+      createElement(ShadeGlyph, { ...props, theme: 'default' })))
+    expect(context.clearRect).toHaveBeenCalledTimes(1)
+    expect(context.fillStyle).toBe('rgb(196, 238, 134)')
+    sample.rerender(createElement('div', { style: { color: '#315d16' } },
+      createElement(ShadeGlyph, { ...props, theme: 'light' })))
+    expect(context.clearRect).toHaveBeenCalledTimes(2)
+    expect(context.fillStyle).toBe('rgb(49, 93, 22)')
+  })
+})
 
 function pixels(code: number, x: number, y: number, width: number, height: number) {
   const fillRect = vi.fn<CanvasRenderingContext2D['fillRect']>()

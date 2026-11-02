@@ -6,6 +6,7 @@ import type { GradientLine } from './gradient'
 import type { BezierPath } from './path'
 import { drawVgaGlyph, type CanvasFont } from './vgaFont'
 import { TOOL_CURSORS, type Tool } from './tools'
+import type { AppTheme } from './settings'
 
 const GUTTER = 42
 const VIEWPORT_CHROME_HEIGHT = 25
@@ -89,23 +90,26 @@ export function drawGlyph(ctx: CanvasRenderingContext2D, code: number, x: number
   ctx.fillText(CP437[code], x + w / 2, y + h * 0.79, w)
 }
 
-export function ShadeGlyph({ code, color, width = 16, height = 32, font = 'ibm-vga', nativeWidth = 8 }: {
+export function ShadeGlyph({ code, color, width = 16, height = 32, font = 'ibm-vga', nativeWidth = 8, theme }: {
   code: number
   color: string
   width?: number
   height?: number
   font?: CanvasFont
   nativeWidth?: 8 | 9
+  theme?: AppTheme
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const scaledWidth = Math.round(width * nativeWidth / 8)
+  // Canvas currentColor resolves at paint time, not when the CSS theme changes.
   useEffect(() => {
-    const ctx = canvas.current?.getContext('2d')
-    if (!ctx) return
+    const element = canvas.current
+    const ctx = element?.getContext('2d')
+    if (!element || !ctx) return
     ctx.clearRect(0, 0, scaledWidth, height)
-    ctx.fillStyle = color
+    ctx.fillStyle = color === 'currentColor' ? getComputedStyle(element).color : color
     drawGlyph(ctx, code, 0, 0, scaledWidth, height, font, nativeWidth)
-  }, [code, color, scaledWidth, height, font, nativeWidth])
+  }, [code, color, scaledWidth, height, font, nativeWidth, theme])
   return <canvas ref={canvas} className="shade-glyph" width={scaledWidth} height={height} aria-hidden="true" />
 }
 
@@ -119,6 +123,7 @@ interface CanvasProps {
   selecting: boolean
   navigating: boolean
   cellSize?: { id: string; width: number; height: number }
+  theme?: AppTheme
   font?: CanvasFont
   nativeWidth?: 8 | 9
   primitive?: boolean
@@ -341,13 +346,15 @@ function drawPath(ctx: CanvasRenderingContext2D, path: BezierPath, selected: num
 
 function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
   editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font, nativeWidth,
-  rows, cellWidth, cellHeight, gutter,
-}: Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'overlay' | 'gradientLine' | 'path' | 'pathNode' | 'font' | 'nativeWidth'> & {
+  rows, cellWidth, cellHeight, gutter, theme = 'default',
+}: Pick<CanvasProps, 'editor' | 'revision' | 'cursor' | 'top' | 'selection' | 'overlay' | 'gradientLine' | 'path' | 'pathNode' | 'font' | 'nativeWidth' | 'theme'> & {
   rows: number; cellWidth: number; cellHeight: number; gutter: number
 }) {
   const raster = useRef<HTMLCanvasElement | null>(null)
   useEffect(() => {
-    if (!canvas.current?.getContext('2d')) return
+    const element = canvas.current
+    if (!element?.getContext('2d')) return
+    const style = gutter && theme !== 'default' ? getComputedStyle(element) : undefined
     const image = raster.current ?? document.createElement('canvas')
     raster.current = image
     const width = gutter + editor.width * cellWidth, height = rows * cellHeight
@@ -358,13 +365,13 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
     ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, width, height)
     if (gutter) {
-      ctx.fillStyle = '#121821'
+      ctx.fillStyle = style?.getPropertyValue('--surface').trim() || '#121821'
       ctx.fillRect(0, 0, gutter, height)
     }
     for (let row = 0; row < rows; row++) {
       const y = top + row
       if (gutter) {
-        ctx.fillStyle = '#657184'
+        ctx.fillStyle = style?.getPropertyValue('--subtle').trim() || '#657184'
         ctx.font = '10px monospace'
         ctx.textAlign = 'right'
         ctx.fillText(String(y + 1), gutter - 6, row * cellHeight + 14, gutter - 8)
@@ -382,7 +389,7 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
         }
       }
     }
-  }, [canvas, editor, revision, top, rows, selection, overlay, cellWidth, cellHeight, gutter, font, nativeWidth])
+  }, [canvas, editor, revision, top, rows, selection, overlay, cellWidth, cellHeight, gutter, font, nativeWidth, theme])
   useEffect(() => {
     const ctx = canvas.current?.getContext('2d')
     if (!ctx || !raster.current) return
@@ -398,7 +405,7 @@ function useCanvasRenderer(canvas: RefObject<HTMLCanvasElement | null>, {
     }
     if (gradientLine) drawGradientLine(ctx, gradientLine, top, cellWidth, cellHeight, gutter)
     if (path) drawPath(ctx, path, pathNode, top, cellWidth, cellHeight, gutter)
-  }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, path, pathNode, cellWidth, cellHeight, gutter, font, nativeWidth])
+  }, [canvas, editor, revision, cursor, top, rows, selection, overlay, gradientLine, path, pathNode, cellWidth, cellHeight, gutter, font, nativeWidth, theme])
 }
 
 function useRowWheel(elementRef: RefObject<HTMLElement | null>, rows: number, disabled: boolean, onScroll: CanvasProps['onScroll'], focusedOnly = false) {
@@ -491,7 +498,7 @@ function RowScrollbar({ top, rows, maximum, canvasId, disabled, onScroll, label 
   </div>
 }
 
-export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', nativeWidth = 8, primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onDoublePoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
+export function ArtCanvas({ editor, tool, revision, cursor, top, selection, selecting, navigating, cellSize = CANVAS_SIZES[0], font = 'ibm-vga', nativeWidth = 8, theme = 'default', primitive, halfBlock, singleClick, overlay, gradientLine, path, pathNode, onNavigate, onPoint, onDoublePoint, onEnd, onScroll, onKey, onRows }: CanvasProps) {
   const host = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const canvasId = useId()
@@ -522,7 +529,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   useRowWheel(canvas, rows, !!(primitive && overlay), onScroll)
   useCanvasRenderer(canvas, {
     editor, revision, cursor, top, selection, overlay, gradientLine, path, pathNode, font, nativeWidth,
-    rows, cellWidth, cellHeight, gutter: GUTTER,
+    rows, cellWidth, cellHeight, gutter: GUTTER, theme,
   })
 
   const viewportStyle: CSSProperties & { '--scrollbar-height': string } = { '--scrollbar-height': `${scrollbarHeight}px` }
