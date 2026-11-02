@@ -63,6 +63,9 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
   production CSP directives in a meta tag before scripts/styles, so static
   hosting retains these restrictions without custom headers. Anti-embedding
   remains header-only; see Static hosting below.
+- `manifest-src 'self'` permits only the bundled same-origin web app manifest,
+  which lists local icons for Chrome shortcuts/installed apps. It adds no service
+  worker, offline cache, network origin, or persisted artwork.
 - Agent access is off by default. CSP additionally permits only the fixed
   loopback broker address. An owner key enables a single editor session; explicit
   human approval issues separate 256-bit agent tokens with 30-minute expiry.
@@ -82,8 +85,8 @@ Clean SAST and audit results are useful evidence, not a security guarantee.
 - Unsaved art is not persisted. A close/reload warning reduces accidental loss
   but browsers can bypass it. Native picker cancellation and download fallback
   are communicated distinctly from verified native close success.
-- Only the five Settings menu preferences (font, cell size, character width,
-  New/Open columns and ANSI mode) are persisted in origin-scoped localStorage.
+- Only the seven Settings menu preferences (font, cell size, character width,
+  New/Open columns, ANSI mode, collapsed header and icon-only toolbar) are persisted in origin-scoped localStorage.
   A versioned whitelist validates stored types and ranges before use and rejects
   oversized or unsupported records. Read/write failures are logged and shown;
   editing remains available with defaults or session-only changes. No artwork,

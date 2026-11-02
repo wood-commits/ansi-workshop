@@ -112,7 +112,13 @@ mouse cursors on the main canvas. Each cursor has a black/white outline for
 contrast and a small crosshair marking the exact click point. The VGA preview
 keeps its navigation cursor. No external icon fonts or network assets are
 required. The bundled SVG favicon matches the header's
-green three-quarter-block brand mark. Tool options have a dedicated row so switching
+green three-quarter-block brand mark. A same-origin web app manifest reuses it
+(plus 192/512px PNG and maskable renders) as the app icon when Chrome creates a
+desktop shortcut or installs the page as an app.
+**Settings > Collapse ANSI Workshop header** hides the brand header and moves the
+document name into the menu bar; **Settings > Icon-only toolbar buttons** hides tool,
+sidebar and Go to row labels (names remain tooltips and accessible names) so the
+toolbar wraps less on small screens. Tool options have a dedicated row so switching
 tools does not shift the canvas. Open, Save, and Save As are in the File menu;
 their canvas keyboard shortcuts remain available.
 Click a menu heading to open it, then hover another heading to switch menus
@@ -157,8 +163,8 @@ without another click. Hovering with all menus closed does not open one.
   Smaller windows scroll horizontally without shrinking the art; the column
   ruler stays aligned. The selected font also applies to the VGA preview,
   function-key palette, all-characters drawer, and brush sample.
-  The five Settings menu options (font, cell size, character width, New/Open
-  columns and ANSI mode) survive reload in this browser's local storage.
+  The seven Settings menu options (font, cell size, character width, New/Open
+  columns, ANSI mode, collapsed header and icon-only toolbar) survive reload in this browser's local storage.
   Preferences are separate for each site origin, including dev and preview ports.
   Invalid or unavailable storage shows an error and uses defaults; failed writes
   leave settings usable for the session. Invalid column drafts do not replace the

@@ -34,6 +34,33 @@ describe('static hosting protections', () => {
     expect(favicon).toContain('fill="#c4ee86"')
   })
 
+  it('links a same-origin web app manifest whose icons install as the favicon brand mark', async () => {
+    expect(productionHtml).toContain('<link rel="manifest" href="./manifest.webmanifest"')
+    expect(productionHtml).toContain('<link rel="apple-touch-icon" href="./apple-touch-icon.png"')
+    expect(developmentHtml).toContain('<link rel="manifest" href="/manifest.webmanifest"')
+    expect(config.preview.headers?.['Content-Security-Policy']).toContain("manifest-src 'self';")
+    const manifest: unknown = JSON.parse(await readFile('public/manifest.webmanifest', 'utf8'))
+    expect(manifest).toMatchObject({ name: 'ANSI Workshop', start_url: './', scope: './', display: 'standalone' })
+    const icons = (manifest as { icons: { src: string; sizes: string; type: string; purpose: string }[] }).icons
+    expect(icons.map(icon => [icon.src, icon.sizes, icon.purpose])).toEqual([
+      ['favicon.svg', 'any', 'any'], ['icon-192.png', '192x192', 'any'],
+      ['icon-512.png', '512x512', 'any'], ['icon-maskable-512.png', '512x512', 'maskable'],
+    ])
+    const pngs = {
+      'icon-192.png': await readFile('public/icon-192.png'),
+      'icon-512.png': await readFile('public/icon-512.png'),
+      'icon-maskable-512.png': await readFile('public/icon-maskable-512.png'),
+      'apple-touch-icon.png': await readFile('public/apple-touch-icon.png'),
+    }
+    for (const icon of [...icons.filter(icon => icon.type === 'image/png'), { src: 'apple-touch-icon.png', sizes: '180x180' }]) {
+      const png = Object.entries(pngs).find(([name]) => name === icon.src)?.[1]
+      if (!png) throw new Error(`Unexpected manifest icon ${icon.src}`)
+      expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      const size = Number(icon.sizes.split('x')[0])
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([size, size])
+    }
+  })
+
   it('emits the supported production CSP before scripts and styles', () => {
     const metas = [...productionHtml.matchAll(/<meta\b[^>]*http-equiv="Content-Security-Policy"[^>]*>/g)]
     expect(metas).toHaveLength(1)
