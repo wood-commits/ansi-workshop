@@ -74,7 +74,7 @@ describe('static hosting protections', () => {
     expect(policy).toContain("script-src 'self';")
     expect(meta.index).toBeGreaterThan(productionHtml.indexOf('<head>'))
     expect(meta.index).toBeLessThan(productionHtml.indexOf('</head>'))
-    for (const resource of productionHtml.matchAll(/<(?:script|link)\b[^>]*>/g)) {
+    for (const resource of productionHtml.matchAll(/<(?:script|link)\b[^>]*>/gi)) {
       expect(meta.index).toBeLessThan(resource.index)
     }
     for (const resource of productionHtml.matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+)"/g)) {
