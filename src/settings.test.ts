@@ -7,18 +7,30 @@ describe('local Settings storage', () => {
     expect(loadSettings()).toEqual({ settings: DEFAULT_SETTINGS })
     const settings = { ...DEFAULT_SETTINGS, columns: 512, art: 'not stored', token: 'not stored' }
     saveSettings(settings)
-    expect(JSON.parse(window.localStorage.getItem(SETTINGS_KEY)!)).toEqual({ version: 1, ...DEFAULT_SETTINGS, columns: 512 })
+    expect(JSON.parse(window.localStorage.getItem(SETTINGS_KEY)!)).toEqual({ version: 2, ...DEFAULT_SETTINGS, columns: 512 })
     expect(loadSettings()).toEqual({ settings: { ...DEFAULT_SETTINGS, columns: 512 } })
+    saveSettings({ ...DEFAULT_SETTINGS, collapseHeader: true, iconOnlyToolbar: true })
+    expect(loadSettings()).toEqual({ settings: { ...DEFAULT_SETTINGS, collapseHeader: true, iconOnlyToolbar: true } })
+  })
+
+  it('migrates version 1 records with layout preferences off, without rewriting storage', () => {
+    const stored = JSON.stringify({ version: 1, font: 'consolas', cellSize: 'native', nativeWidth: 8, columns: 132, ansiMode: 'ansi' })
+    window.localStorage.setItem(SETTINGS_KEY, stored)
+    expect(loadSettings()).toEqual({ settings: { ...DEFAULT_SETTINGS, font: 'consolas', columns: 132 } })
+    expect(window.localStorage.getItem(SETTINGS_KEY)).toBe(stored)
   })
 
   it.each([
     '{', 'null', '[]', '"text"', 'x'.repeat(1025),
-    JSON.stringify({ version: 2, ...DEFAULT_SETTINGS }),
+    JSON.stringify({ version: 3, ...DEFAULT_SETTINGS }),
+    JSON.stringify({ version: 1, ...DEFAULT_SETTINGS }),
+    JSON.stringify({ version: 2, ...DEFAULT_SETTINGS, collapseHeader: undefined }),
     ...[
       { font: 'remote-font' }, { cellSize: 'huge' }, { nativeWidth: 10 },
       { columns: 0 }, { columns: 513 }, { columns: 1.5 }, { columns: '80' },
       { ansiMode: 'tundra' }, { token: 'unexpected' },
-    ].map(change => JSON.stringify({ version: 1, ...DEFAULT_SETTINGS, ...change })),
+      { collapseHeader: 'true' }, { iconOnlyToolbar: 1 },
+    ].map(change => JSON.stringify({ version: 2, ...DEFAULT_SETTINGS, ...change })),
   ])('rejects malformed, unsupported or out-of-range storage: %s', value => {
     window.localStorage.setItem(SETTINGS_KEY, value)
     const result = loadSettings()

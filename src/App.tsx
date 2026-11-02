@@ -53,6 +53,27 @@ function ToolIcon({ tool }: { tool: Tool }) {
   </svg>
 }
 
+const TOOL_BUTTONS: readonly { tool: Tool; label: string; hint?: string }[] = [
+  { tool: 'draw', label: 'Draw' },
+  { tool: 'cursor', label: 'Cursor', hint: 'Move cursor without painting (Alt+click with any tool)' },
+  { tool: 'erase', label: 'Erase' },
+  { tool: 'recolor', label: 'Recolor', hint: "Drag to change existing cells' foreground and background without changing their glyphs" },
+  { tool: 'select', label: 'Select' },
+  { tool: 'move', label: 'Move', hint: 'Drag all side-connected painted cells, regardless of color or glyph' },
+  { tool: 'primitive', label: 'Primitive' },
+  { tool: 'path', label: 'Path' },
+  { tool: 'gradient', label: 'Gradient' },
+  { tool: 'fill', label: 'Fill', hint: 'Fill with the selected foreground color' },
+  { tool: 'eyedropper', label: 'Eyedropper', hint: 'Pick foreground and background colors without changing the brush glyph' },
+]
+
+function SidebarIcon() {
+  return <svg className="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" />
+  </svg>
+}
+
 const clampRow = (row: number) => Math.min(MAX_ROW, Math.max(0, row))
 interface PathSnapshot { path?: BezierPath; selection?: number }
 interface FinishedPath {
@@ -126,7 +147,7 @@ export function App() {
   const [ansimation, setAnsimation] = useState<{ source: AnimationFrame; top: number }>()
   const [showSauce, setShowSauce] = useState(false)
   const [settings, setSettings] = useState(initialSettings.settings)
-  const { font, nativeWidth, ansiMode } = settings
+  const { font, nativeWidth, ansiMode, collapseHeader, iconOnlyToolbar } = settings
   const cellSize = CANVAS_SIZES.find(size => size.id === settings.cellSize) ?? CANVAS_SIZES[0]
   const [columns, setColumns] = useState(String(initialSettings.settings.columns))
   useEffect(() => {
@@ -788,12 +809,12 @@ export function App() {
   }
 
   return <div className="app-shell" onKeyDown={historyKeyDown}>
-    <header className="app-header">
+    {collapseHeader ? <h1 className="visually-hidden">ANSI Workshop</h1> : <header className="app-header">
       <div className="brand-mark" aria-hidden="true">▟</div>
       <div><h1>ANSI<span>WORKSHOP</span></h1><p>A little old school. A limitless canvas.</p></div>
       <div className="document-title">{name}{dirty ? ' *' : ''}<span>CP437 · {editor.width} columns</span></div>
       <span className="local-badge"><span />LOCAL ONLY</span>
-    </header>
+    </header>}
     <nav ref={menuBar} className="menu-bar" aria-label="Application menu" onKeyDown={event => {
       if (event.key === 'Escape' && openMenu) {
         event.preventDefault()
@@ -835,6 +856,13 @@ export function App() {
       </div></details>
       <details open={openMenu === 'Settings'}><summary ref={settingsHeading} onMouseEnter={() => hoverMenu('Settings')} onClick={event => toggleMenu(event, 'Settings')}>Settings</summary>
         <div className="menu-popup settings-menu">
+          <div className="menu-label settings-section">Small screens</div>
+          <label className="checkbox-setting"><input type="checkbox" checked={collapseHeader}
+            onChange={event => updateSettings({ collapseHeader: event.target.checked })} />Collapse ANSI Workshop header</label>
+          <label className="checkbox-setting"><input type="checkbox" checked={iconOnlyToolbar}
+            onChange={event => updateSettings({ iconOnlyToolbar: event.target.checked })} />Icon-only toolbar buttons</label>
+          <p className="settings-section-end">The collapsed header moves the document name into the menu bar. Icon-only buttons keep
+            the toolbar on fewer lines and show names as tooltips.</p>
           <label>New/Open columns<input aria-label="New/Open columns" type="number" min={1} max={MAX_COLUMNS} step={1}
             value={columns} onChange={event => {
               const value = event.target.value
@@ -885,7 +913,9 @@ export function App() {
       <details open={openMenu === 'Help'}><summary ref={helpHeading} onMouseEnter={() => hoverMenu('Help')} onClick={event => toggleMenu(event, 'Help')}>Help</summary><div className="menu-popup" onClick={closeMenu}>
         <button onClick={() => showInfo('about')}>About ANSI Workshop</button>
       </div></details>
-      <div className="menu-hint">No cloud. No accounts. Just characters.</div>
+      {collapseHeader
+        ? <div className="menu-document-title">{name}{dirty ? ' *' : ''}<span>CP437 · {editor.width} columns</span></div>
+        : <div className="menu-hint">No cloud. No accounts. Just characters.</div>}
     </nav>
     <dialog ref={infoDialog} className="info-dialog" aria-labelledby="info-dialog-title"
       onKeyDown={event => {
@@ -927,19 +957,11 @@ export function App() {
           : 'SAUCE metadata removed. Save the document to write the change.')
       }}
       onClose={() => { setShowSauce(false); fileHeading.current?.focus() }} />}
-    <div className="toolbar">
+    <div className={`toolbar${iconOnlyToolbar ? ' icon-only' : ''}`}>
       <div className="tool-group" aria-label="Drawing tools">
-        <button aria-pressed={tool === 'draw'} onClick={() => setTool('draw')}><ToolIcon tool="draw" />Draw</button>
-        <button aria-pressed={tool === 'cursor'} title="Move cursor without painting (Alt+click with any tool)" onClick={() => setTool('cursor')}><ToolIcon tool="cursor" />Cursor</button>
-        <button aria-pressed={tool === 'erase'} onClick={() => setTool('erase')}><ToolIcon tool="erase" />Erase</button>
-        <button aria-pressed={tool === 'recolor'} title="Drag to change existing cells' foreground and background without changing their glyphs" onClick={() => setTool('recolor')}><ToolIcon tool="recolor" />Recolor</button>
-        <button aria-pressed={tool === 'select'} onClick={() => setTool('select')}><ToolIcon tool="select" />Select</button>
-        <button aria-pressed={tool === 'move'} title="Drag all side-connected painted cells, regardless of color or glyph" onClick={() => setTool('move')}><ToolIcon tool="move" />Move</button>
-        <button aria-pressed={tool === 'primitive'} onClick={() => setTool('primitive')}><ToolIcon tool="primitive" />Primitive</button>
-        <button aria-pressed={tool === 'path'} onClick={() => setTool('path')}><ToolIcon tool="path" />Path</button>
-        <button aria-pressed={tool === 'gradient'} onClick={() => setTool('gradient')}><ToolIcon tool="gradient" />Gradient</button>
-        <button aria-pressed={tool === 'fill'} title="Fill with the selected foreground color" onClick={() => setTool('fill')}><ToolIcon tool="fill" />Fill</button>
-        <button aria-pressed={tool === 'eyedropper'} title="Pick foreground and background colors without changing the brush glyph" onClick={() => setTool('eyedropper')}><ToolIcon tool="eyedropper" />Eyedropper</button>
+        {TOOL_BUTTONS.map(({ tool: id, label, hint }) => <button key={id} aria-pressed={tool === id}
+          title={iconOnlyToolbar ? (hint ? `${label}: ${hint}` : label) : hint} onClick={() => setTool(id)}>
+          <ToolIcon tool={id} /><span className="tool-label">{label}</span></button>)}
       </div>
       <div className="tool-group history-tools">
         <button onClick={undo} disabled={!canUndo} title="Undo">↶</button>
@@ -959,7 +981,9 @@ export function App() {
       </form>
       {opening && <button onClick={() => abortOpen.current?.abort()}>Cancel open</button>}
       {saving && <button onClick={() => abortSave.current?.abort()}>Cancel save</button>}
-      <button aria-expanded={showSidebar} aria-controls="editor-sidebar" onClick={() => setShowSidebar(value => !value)}>{showSidebar ? 'Hide' : 'Show'} sidebar</button>
+      <button className="sidebar-toggle" aria-expanded={showSidebar} aria-controls="editor-sidebar"
+        title={iconOnlyToolbar ? `${showSidebar ? 'Hide' : 'Show'} sidebar` : undefined}
+        onClick={() => setShowSidebar(value => !value)}><SidebarIcon /><span className="tool-label">{showSidebar ? 'Hide' : 'Show'} sidebar</span></button>
       <div className="tool-options" role="group" aria-label="Tool options">
         {tool === 'draw' && <div className="primitive-controls">
           <label>Mode <select aria-label="Draw mode" value={drawMode} onChange={event => {

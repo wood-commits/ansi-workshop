@@ -529,8 +529,12 @@ Use **Hide sidebar** in the toolbar or **Window > Hide sidebar** to give the
 canvas more room. **Show sidebar** restores the color, preview, help and agent
 panels with their state intact. This toggle is session-only, does not edit art,
 and does not disconnect agent access; use the agent panel to disconnect.
-The five **Settings** menu options (font, cell size, character width, New/Open
-columns and ANSI mode) survive reload in this browser's local storage, separately
+On small screens, **Settings > Collapse ANSI Workshop header** hides the brand
+header and shows the document name in the menu bar, and **Settings > Icon-only
+toolbar buttons** hides button labels so the toolbar wraps less. Hover a button
+for its name.
+The seven **Settings** menu options (font, cell size, character width, New/Open
+columns, ANSI mode, collapsed header and icon-only toolbar) survive reload in this browser's local storage, separately
 for each site origin (including dev/preview ports). New/Open defaults never
 resize or change the current document. Invalid column drafts retain the last
 valid saved value. Invalid/unavailable storage shows an error and uses defaults;

@@ -20,8 +20,10 @@ browser file picker, subject to browser write permission. The download fallback 
 temporary object URL. New documents forget the previous handle but preserve
 the brush/clipboard preferences. Opening replaces the handle with the selected
 file's native handle, or clears it for read-only file-input fallback.
-Reloading loses all in-memory state except the five Settings menu preferences:
-canvas font, cell size, character width, New/Open columns and ANSI mode.
+Reloading loses all in-memory state except the seven Settings menu preferences:
+canvas font, cell size, character width, New/Open columns, ANSI mode, collapsed
+header and icon-only toolbar. Version 1 records (without the two layout booleans)
+load with both layout options off; writes use version 2.
 These are stored under `ansi-workshop.settings` in origin-scoped localStorage,
 with a versioned, bounded, strictly validated whitelist. Missing storage uses
 defaults; malformed/unsupported storage and read/write failures are logged and
