@@ -1,9 +1,11 @@
 {
   "name": "ansi-workshop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "engines": { "node": "^22.13.0 || >=24.0.0" },
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "font:generate": "node --experimental-strip-types scripts/generate-font.ts",

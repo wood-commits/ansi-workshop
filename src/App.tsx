@@ -5,12 +5,12 @@ import { TundraColors } from './TundraColors'
 import { readTundraDocument } from './tundra'
 import { ArtCanvas, CANVAS_SIZES, ShadeGlyph, VgaPreview, type PointerInput } from './Canvas'
 import type { Tool } from './tools'
-import { Editor, EMPTY, key, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type Point } from './model'
+import { Editor, EMPTY, key, MAX_ROW, MAX_COLUMNS, WIDTH, validateWidth, linePoints, pointFromKey, rectangle, validPoint, type Block, type Cell, type MirrorDirection, type Point, type Rect } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
-import { convertPathNode, hitPathSegment, insertPathNode, linkPathHandles, movePathHandle, pathContainsPoint, rasterizePath, removePathNode, translatePath, type BezierPath, type PathNode } from './path'
+import { appendPathNode, constrainPathPoint, convertPathNode, hitPathSegment, insertPathNode, linkPathHandles, movePathHandle, pathContainsPoint, rasterizePath, removePathNode, translatePath, type BezierPath, type PathNode } from './path'
 import { gradientRegion, rasterizeGradient, type GradientKind, type GradientLine } from './gradient'
 import { bucketFill, type FillMode } from './fill'
-import { connectedShape, moveShape } from './move'
+import { connectedShape, moveSelection, moveShape } from './move'
 import { rasterizeHalfBlockStroke, type HalfPoint } from './draw'
 import { chooseFile, hasNativeSave, writeAnsi, writeAscii, writeTundra, type AnsiFileHandle } from './save'
 import { chooseAnsiFile } from './open'
@@ -59,7 +59,7 @@ const TOOL_BUTTONS: readonly { tool: Tool; label: string; hint?: string }[] = [
   { tool: 'erase', label: 'Erase' },
   { tool: 'recolor', label: 'Recolor', hint: "Drag to change existing cells' foreground and background without changing their glyphs" },
   { tool: 'select', label: 'Select' },
-  { tool: 'move', label: 'Move', hint: 'Drag all side-connected painted cells, regardless of color or glyph' },
+  { tool: 'move', label: 'Move', hint: 'Drag the active selection, or all side-connected painted cells when nothing is selected' },
   { tool: 'primitive', label: 'Primitive' },
   { tool: 'path', label: 'Path' },
   { tool: 'gradient', label: 'Gradient' },
@@ -86,7 +86,12 @@ export function App() {
   const [editor, setEditor] = useState(() => new Editor())
   const [revision, setRevision] = useState(0)
   const revisionCounter = useRef(0)
+  const historyVersion = useRef(editor.version)
   const refresh = () => {
+    if (editor.version !== historyVersion.current && !pathDraft.current) {
+      pathUndo.current = []; pathRedo.current = []; restoredFinish.current = undefined
+    }
+    historyVersion.current = editor.version
     revisionCounter.current++; setRevision(revisionCounter.current)
     const finished = restoredFinish.current
     setPathHistory({
@@ -103,6 +108,7 @@ export function App() {
   const [fg, setFg] = useState(7)
   const [bg, setBg] = useState(0)
   const [code, setCode] = useState(219)
+  const [insertMode, setInsertMode] = useState(false)
   const [palette, setPalette] = useState(0)
   const [tool, setActiveTool] = useState<Tool>('draw')
   const [path, setPath] = useState<BezierPath>()
@@ -119,11 +125,11 @@ export function App() {
     index: number; part: 'point' | 'incoming' | 'outgoing' | 'new' | 'path'; start: Point; node: PathNode; before?: BezierPath; beforeSelection?: number
   } | undefined>(undefined)
   const [drawMode, setDrawMode] = useState<'full' | 'half'>('full')
-  const [movePreview, setMovePreview] = useState<ReadonlyMap<string, Cell>>()
+  const [movePreview, setMovePreview] = useState<{ cells: ReadonlyMap<string, Cell>; selection?: Rect }>()
   const moveDrag = useRef<{
-    start: Point; region: ReadonlyMap<string, Cell>; cells: ReadonlyMap<string, Cell>
+    start: Point; region: ReadonlyMap<string, Cell>; cells: ReadonlyMap<string, Cell>; selection?: Rect; destination?: Rect
   } | undefined>(undefined)
-  const [fillMode, setFillMode] = useState<FillMode>('shape')
+  const [fillMode, setFillMode] = useState<FillMode>('enclosed')
   const [primitiveKind, setPrimitiveKind] = useState<PrimitiveKind>('rectangle')
   const [primitiveFilled, setPrimitiveFilled] = useState(true)
   const [primitiveSubtract, setPrimitiveSubtract] = useState(false)
@@ -176,6 +182,7 @@ export function App() {
   const [opening, setOpening] = useState(false)
   const [goRow, setGoRow] = useState('1')
   const [openMenu, setOpenMenu] = useState<'File' | 'Edit' | 'Window' | 'Settings' | 'Help'>()
+  const [mirrorExpanded, setMirrorExpanded] = useState(false)
   const [dialogKind, setDialogKind] = useState<'font' | 'about'>('font')
   const menuBar = useRef<HTMLElement>(null)
   const infoDialog = useRef<HTMLDialogElement>(null)
@@ -323,7 +330,12 @@ export function App() {
       const version = editor.version
       for (const [id, cell] of moving.cells) editor.paint(pointFromKey(id), cell)
       editor.commit(); refresh()
-      setMessage(editor.version === version ? 'Move unchanged.' : 'Shape moved. Undo restores its previous position and overwritten art.')
+      if (moving.destination) {
+        setAnchor({ x: moving.destination.left, y: moving.destination.top })
+        setSelectionEnd({ x: moving.destination.right, y: moving.destination.bottom })
+      }
+      setMessage(editor.version === version ? 'Move unchanged.'
+        : `${moving.selection ? 'Selection' : 'Shape'} moved. Undo restores its previous position and overwritten art.`)
       return
     }
     const gradient = gradientDrag.current
@@ -411,10 +423,14 @@ export function App() {
     else undo()
   }
   const place = (character: number) => {
-    editor.paint(cursor, { code: character, fg, bg })
-    editor.commit()
-    move(cursor.x === editor.width - 1 ? { x: 0, y: cursor.y + 1 } : { x: cursor.x + 1, y: cursor.y })
-    refresh()
+    try {
+      const cell = { code: character, fg, bg }
+      if (insertMode) editor.insert(cursor, cell)
+      else editor.paint(cursor, cell)
+      editor.commit()
+      move({ x: cursor.x + 1, y: cursor.y })
+      setError(''); refresh()
+    } catch (cause) { report(cause) }
   }
   const copy = () => {
     if (!selection) { setMessage('Select a block first: choose Select, then drag across the canvas.'); return }
@@ -434,6 +450,14 @@ export function App() {
   const flip = (axis: 'x' | 'y') => {
     if (!selection) return
     editor.flip(selection, axis); editor.commit(); refresh()
+  }
+  const mirror = (direction: MirrorDirection) => {
+    if (!selection) { setMessage('Select a block before mirroring.'); return }
+    try {
+      const { clipped } = editor.mirror(selection, direction)
+      editor.commit(); refresh()
+      setMessage(`Mirrored block ${direction}${clipped ? ' (clipped at the document edge)' : ''}. Undo restores overwritten art.`)
+    } catch (cause) { report(cause) }
   }
   const clearSelection = () => { setAnchor(undefined); setSelectionEnd(undefined) }
   const navigate = (next: Point) => { clearSelection(); move(next) }
@@ -528,7 +552,8 @@ export function App() {
       else report(cause)
     } finally { setSaving(false); abortSave.current = undefined }
   }
-  const keyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
+  const keyDown = (event: React.KeyboardEvent<HTMLCanvasElement> | KeyboardEvent) => {
+    if (event.defaultPrevented || ('nativeEvent' in event ? event.nativeEvent.isComposing : event.isComposing)) return
     if (tool === 'path' && pathDraft.current) {
       if (event.key === 'Tab') return
       if (!event.altKey && (event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) return
@@ -564,6 +589,12 @@ export function App() {
       if (key === 'a') { setAnchor({ x: 0, y: 0 }); setSelectionEnd({ x: editor.width - 1, y: editor.lastRow }); setTool('select') }
       return
     }
+    if (event.key === 'Insert') {
+      if (event.shiftKey) return
+      event.preventDefault()
+      if (!event.repeat) setInsertMode(value => !value)
+      return
+    }
     const functionKey = /^F([1-9]|1[0-2])$/.exec(event.key)
     if (functionKey) {
       event.preventDefault()
@@ -579,7 +610,10 @@ export function App() {
     const delta = deltas[event.key]
     if (delta) {
       event.preventDefault()
-      const next = move({ x: cursor.x + delta.x, y: cursor.y + delta.y })
+      const next = move({
+        x: (cursor.x + delta.x + editor.width) % editor.width,
+        y: cursor.y + delta.y,
+      })
       if (event.shiftKey) { if (!anchor) setAnchor(cursor); setSelectionEnd(next) }
       return
     }
@@ -612,10 +646,11 @@ export function App() {
     if (!validPoint(next, editor.width)) { report(new Error('Pointer coordinates exceed the document columns or safe rows.')); return }
     if (tool === 'path') {
       const draft = pathDraft.current ?? { origin: next.y, nodes: [], closed: false }
-      const position = { x: next.x + pointer.subcell.x, y: next.y - draft.origin + pointer.subcell.y }
+      let position = { x: next.x + pointer.subcell.x, y: next.y - draft.origin + pointer.subcell.y }
       setCursor(next); clearSelection()
       if (start) {
         let hit: { index: number; part: 'point' | 'incoming' | 'outgoing' } | undefined
+        let extendCorner = false
         let nearest = 1
         for (let index = 0; index < draft.nodes.length; index++) {
           const node = draft.nodes[index]
@@ -627,13 +662,21 @@ export function App() {
           }
         }
         if (hit?.index === 0 && hit.part === 'point' && !draft.closed && draft.nodes.length >= 3) {
-          editPath({ ...draft, closed: true }, 0)
-          setMessage('Path closed. Drag nodes or handles to adjust; Finish or Enter applies it.')
-          return
+          const first = draft.nodes[0].point
+          const aligned = pointer.shiftKey ? constrainPathPoint(first, draft.nodes[draft.nodes.length - 1].point) : first
+          if (aligned.x === first.x && aligned.y === first.y) {
+            const nodes = pointer.shiftKey ? draft.nodes.map((node, index) => index === 0
+              ? { ...node, incoming: node.point, linked: false } : index === draft.nodes.length - 1
+                ? { ...node, outgoing: node.point, linked: false } : node) : draft.nodes
+            editPath({ ...draft, nodes, closed: true }, 0)
+            setMessage('Path closed. Drag nodes or handles to adjust; Finish or Enter applies it.')
+            return
+          }
+          hit = undefined; extendCorner = true; position = first
         }
         let segment: ReturnType<typeof hitPathSegment>, inside = false
         try {
-          segment = hit ? undefined : hitPathSegment(draft, position, pointer.tolerance)
+          segment = hit || extendCorner ? undefined : hitPathSegment(draft, position, pointer.tolerance)
           inside = !hit && !segment && draft.closed && pathContainsPoint(draft, position)
         } catch (cause) { report(cause); return }
         if (hit) {
@@ -645,7 +688,7 @@ export function App() {
           const node = { point: position, incoming: position, outgoing: position }
           pathDrag.current = { index: draft.nodes.length, part: 'new', start: position, node, before: pathDraft.current, beforeSelection: pathNode }
           setPathNode(draft.nodes.length)
-          updatePath({ ...draft, nodes: [...draft.nodes, node] })
+          updatePath(appendPathNode(draft, position, pointer.shiftKey))
         } else {
           setMessage('Drag a node or handle to edit the closed path; Finish or Enter applies it.')
           return
@@ -653,22 +696,33 @@ export function App() {
       } else {
         const drag = pathDrag.current
         if (!drag) return
-        const dx = position.x - drag.start.x, dy = position.y - drag.start.y
+        const delta = { x: position.x - drag.start.x, y: position.y - drag.start.y }
+        const { x: dx, y: dy } = pointer.shiftKey && drag.part === 'point'
+          ? constrainPathPoint(delta, { x: 0, y: 0 }) : delta
         const shift = (p: Point): Point => ({ x: p.x + dx, y: p.y + dy })
         if (drag.part === 'path' && drag.before) {
           try { updatePath(translatePath(drag.before, { x: dx, y: dy }, editor.width)) }
           catch (cause) { report(cause) }
           return
         }
-        const node = drag.part === 'new'
-          ? { ...drag.node, outgoing: position, incoming: { x: 2 * drag.node.point.x - position.x, y: 2 * drag.node.point.y - position.y } }
-          : drag.part === 'point'
+        if (drag.part === 'new') {
+          updatePath(appendPathNode(drag.before ?? { origin: draft.origin, nodes: [], closed: false },
+            drag.node.point, pointer.shiftKey, position))
+          refresh()
+          return
+        }
+        const handle = drag.part === 'incoming' ? 'incoming' : 'outgoing'
+        const handlePosition = shift(drag.node[handle])
+        const node = drag.part === 'point'
             ? { ...drag.node, point: shift(drag.node.point), incoming: shift(drag.node.incoming), outgoing: shift(drag.node.outgoing) }
-            : movePathHandle(drag.node, drag.part === 'incoming' ? 'incoming' : 'outgoing', shift(drag.node[drag.part === 'incoming' ? 'incoming' : 'outgoing']))
+            : movePathHandle(drag.node, handle, pointer.shiftKey ? constrainPathPoint(handlePosition, drag.node.point) : handlePosition)
+        const current = draft.nodes[drag.index]
+        if (node.linked === current.linked && (['point', 'incoming', 'outgoing'] as const)
+          .every(part => node[part].x === current[part].x && node[part].y === current[part].y)) return
         updatePath({ ...draft, nodes: draft.nodes.map((value, index) => index === drag.index ? node : value) })
       }
       setMessage(draft.closed ? 'Path closed. Drag nodes or handles; Finish or Enter applies; Escape cancels.'
-        : 'Click to add nodes; drag to create curves. Click the first node to close; Finish or Enter applies; Escape cancels.')
+        : 'Click to add nodes; drag to create curves. Hold Shift for horizontal/vertical lines or drags. Click the first node to close; Finish or Enter applies; Escape cancels.')
       refresh()
     } else if (tool === 'fill' || tool === 'eyedropper') {
       if (!start) return
@@ -690,16 +744,22 @@ export function App() {
     } else if (tool === 'move') {
       try {
         if (start) {
-          clearSelection()
           setError('')
-          moveDrag.current = { start: next, region: connectedShape(editor.cells, next, editor.width), cells: new Map() }
+          moveDrag.current = {
+            start: next, region: selection ? editor.cells : connectedShape(editor.cells, next, editor.width),
+            selection, cells: new Map(),
+          }
         }
         const drag = moveDrag.current
         if (!drag) return
-        drag.cells = moveShape(drag.region, { x: next.x - drag.start.x, y: next.y - drag.start.y }, editor.width)
+        const offset = { x: next.x - drag.start.x, y: next.y - drag.start.y }
+        const preview = drag.selection ? moveSelection(drag.region, drag.selection, offset, editor.width)
+          : { cells: moveShape(drag.region, offset, editor.width), selection: undefined }
+        drag.cells = preview.cells
+        drag.destination = preview.selection
         setCursor(next)
-        setMovePreview(drag.cells)
-        setMessage(`Moving ${drag.region.size} connected cells. Release to place; Escape cancels. Shape stays within canvas edges.`)
+        setMovePreview(preview)
+        setMessage(`Moving ${drag.selection ? 'selected block' : `${drag.region.size} connected cells`}. Release to place; Escape cancels. ${drag.selection ? 'Selection' : 'Shape'} stays within canvas edges.`)
       } catch (cause) {
         moveDrag.current = undefined; setMovePreview(undefined)
         report(cause)
@@ -799,6 +859,7 @@ export function App() {
   }
   const toggleMenu = (event: React.MouseEvent<HTMLElement>, menu: typeof openMenu) => {
     event.preventDefault()
+    setMirrorExpanded(false)
     setOpenMenu(previous => previous === menu ? undefined : menu)
   }
   const hoverMenu = (menu: typeof openMenu) => {
@@ -811,6 +872,20 @@ export function App() {
     const content = infoDialog.current?.querySelector<HTMLDivElement>('.info-dialog-content')
     if (content) content.scrollTop = 0
   }
+
+  useEffect(() => {
+    const dispatch = (event: KeyboardEvent) => {
+      if (event.target instanceof Element) {
+        if (event.target.closest('canvas, input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog, [role="scrollbar"]')) return
+        if ((event.key === 'Enter' || event.key === ' ') && event.target.closest('button, summary, a, [role="button"], [role="tab"]')) return
+      }
+      // Color cycling remains canvas-only; controls retain their modified arrows.
+      if ((event.ctrlKey || event.metaKey) && event.key.startsWith('Arrow')) return
+      keyDown(event)
+    }
+    document.addEventListener('keydown', dispatch)
+    return () => document.removeEventListener('keydown', dispatch)
+  })
 
   return <div className="app-shell" onKeyDown={historyKeyDown}>
     {collapseHeader ? <h1 className="visually-hidden">ANSI Workshop</h1> : <header className="app-header">
@@ -847,6 +922,18 @@ export function App() {
         <button onClick={paste} disabled={!clipboard || !!path}>Paste at cursor <kbd>Ctrl V</kbd></button>
         <button onClick={() => flip('x')} disabled={!selection || !!path}>Flip X (mirror horizontally)</button>
         <button onClick={() => flip('y')} disabled={!selection || !!path}>Flip Y (mirror vertically)</button>
+        <details className="block-mirror" open={openMenu === 'Edit' && mirrorExpanded}>
+          <summary aria-disabled={!selection || !!path} onClick={event => {
+            event.preventDefault()
+            if (selection && !path) setMirrorExpanded(value => !value)
+          }}>Mirror <span aria-hidden="true">{mirrorExpanded ? '−' : '+'}</span></summary>
+          <div className="mirror-options" role="group" aria-label="Mirror block">
+            <button disabled={!selection || !!path} onClick={() => mirror('above')}>Above</button>
+            <button disabled={!selection || !!path} onClick={() => mirror('below')}>Below</button>
+            <button disabled={!selection || !!path} onClick={() => mirror('left')}>Left</button>
+            <button disabled={!selection || !!path} onClick={() => mirror('right')}>Right</button>
+          </div>
+        </details>
         <button disabled={!selection || !!path} onClick={() => { if (selection) { editor.clear(selection); editor.commit(); refresh() } }}>Delete block</button>
         <button onClick={clearSelection} disabled={!selection}>Deselect <kbd>Esc</kbd></button>
       </div></details>
@@ -1009,7 +1096,7 @@ export function App() {
         {tool === 'erase' && <span className="muted">Drag to restore default blank cells</span>}
         {tool === 'recolor' && <span className="muted">Drag to recolor existing cells with FG and BG · Glyphs unchanged · Blank cells untouched</span>}
         {tool === 'select' && <span className="muted">Drag to select a block · Shift+arrows extends the selection</span>}
-        {tool === 'move' && <span className="muted">Drag connected art to move it · Destination cells are overwritten · Esc cancels</span>}
+        {tool === 'move' && <span className="muted">{selection ? 'Drag to move the selected block, including blanks' : 'Drag connected art to move it'} · Destination cells are overwritten · Esc cancels</span>}
         {tool === 'path' && <div className="primitive-controls">
           <label>Mode <select aria-label="Path mode" title="Fill uses FG/BG. Subtract cuts to BG and approximates clipped glyphs." value={pathSubtract ? 'subtract' : 'fill'} onChange={event => {
             const value = event.target.value
@@ -1089,8 +1176,8 @@ export function App() {
     <main className={`workspace${showSidebar ? '' : ' sidebar-collapsed'}`}>
       <section className="editor-panel" aria-label="Screen editor">
         <div className="canvas-heading"><span><span className="live-dot" /> {name}{dirty ? ' · modified' : ''}</span><span>{editor.width} × ∞ <span className="muted">/ {tundra ? 'TundraDraw' : ice ? 'ANSI (iCE Colors)' : 'ANSI'}</span></span></div>
-        <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth} theme={theme}
-          primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode} onDoublePoint={tool === 'path' ? doublePoint : undefined}
+        <ArtCanvas key={`canvas-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} selection={movePreview?.selection ?? selection} tool={tool} selecting={tool === 'select'} cellSize={displaySize} font={font} nativeWidth={nativeWidth} theme={theme}
+          primitive={tool === 'primitive' || tool === 'gradient' || tool === 'move' || tool === 'path'} overlay={pathPreview ?? movePreview?.cells ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} path={path} pathNode={pathNode} onDoublePoint={tool === 'path' ? doublePoint : undefined}
           singleClick={tool === 'fill' || tool === 'eyedropper'}
           halfBlock={tool === 'draw' && drawMode === 'half'}
           navigating={tool === 'cursor'} onNavigate={navigate} onPoint={point} onEnd={endPointer} onScroll={scroll} onKey={keyDown} onRows={setVisibleRows} />
@@ -1160,7 +1247,7 @@ export function App() {
         </section>}
         {showPreview && <VgaPreview key={`preview-${agentDocument}`} editor={editor} revision={revision} cursor={cursor} top={top} font={font} nativeWidth={nativeWidth}
           scrollingDisabled={!!(pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview)}
-          selection={selection} overlay={pathPreview ?? movePreview ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
+          selection={movePreview?.selection ?? selection} overlay={pathPreview ?? movePreview?.cells ?? gradientPreview ?? primitivePreview} gradientLine={gradientLine} onPoint={selectPoint} onScroll={scroll} onKey={keyDown}
           onEnd={(next, moved) => { if (!moved) clearSelection(); move(next) }} />}
         <section className="panel quick-help"><h2>At your fingertips</h2>
           <p><kbd>↑ ↓ ← →</kbd> Move cursor</p><p><kbd>F1–F12</kbd> Place palette character</p>
@@ -1183,6 +1270,7 @@ export function App() {
         {!pathResult.error && <button onClick={() => setError('')} aria-label="Dismiss error">×</button>}</div>}
       <footer className="status-bar">
         <span className="cursor-position" aria-label="Cursor position">COL <strong>{String(cursor.x + 1).padStart(2, '0')}</strong> ROW <strong>{String(cursor.y + 1).padStart(2, '0')}</strong></span>
+        <span aria-label="Typing mode" aria-live="polite" title={`${insertMode ? 'Insert' : 'Overwrite'} mode (Insert to toggle)`}>{insertMode ? 'INS' : 'OVR'}</span>
         <span className="status-message" role="status">{message}</span>
         <span>{selection ? `${selection.right - selection.left + 1} × ${selection.bottom - selection.top + 1} selected` : `${tool.toUpperCase()} MODE`}</span>
       </footer>

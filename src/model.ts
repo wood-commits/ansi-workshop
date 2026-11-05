@@ -11,6 +11,7 @@ export const MAX_ROW = Number.MAX_SAFE_INTEGER - 1000
 export interface Point { x: number; y: number }
 export interface Cell { code: number; fg: number; bg: number }
 export interface Rect { left: number; top: number; right: number; bottom: number }
+export type MirrorDirection = 'above' | 'below' | 'left' | 'right'
 export const EMPTY: Readonly<Cell> = Object.freeze({ code: 32, fg: 7, bg: 0 })
 export interface Block { width: number; height: number; cells: ReadonlyMap<string, Cell> }
 interface Change { point: Point; before: Cell; after: Cell }
@@ -86,6 +87,21 @@ export class Editor {
     this.pending.set(id, { point: { ...point }, before: existing?.before ?? { ...before }, after: { ...cell } })
     this.write(point, cell)
   }
+  insert(point: Point, cell: Cell): void {
+    if (!validPoint(point, this.width)) throw new Error(`Cursor coordinates must be safe, nonnegative integers within ${this.width} columns.`)
+    validateCell(cell, this.format)
+    if (this.data.has(key(this.width - 1, point.y))) {
+      throw new Error(`Insert would discard artwork at column ${this.width}. Clear the last column or switch to overwrite mode.`)
+    }
+    const row: { point: Point; cell: Cell }[] = []
+    for (const [id, existing] of this.data) {
+      const position = pointFromKey(id)
+      if (position.y === point.y && position.x >= point.x) row.push({ point: position, cell: existing })
+    }
+    for (const existing of row) this.paint(existing.point, EMPTY)
+    for (const existing of row) this.paint({ x: existing.point.x + 1, y: point.y }, existing.cell)
+    this.paint(point, cell)
+  }
   commit(): void {
     const changes = [...this.pending.values()].filter(change => !same(change.before, change.after))
     this.pending.clear()
@@ -158,6 +174,55 @@ export class Editor {
         y: rect.top + (axis === 'y' ? block.height - point.y - 1 : point.y),
       }, { ...cell, code: flipCharacter(cell.code, axis) })
     }
+  }
+  mirror(rect: Rect, direction: MirrorDirection): { clipped: boolean } {
+    if (!validPoint({ x: rect.left, y: rect.top }, this.width) ||
+        !validPoint({ x: rect.right, y: rect.bottom }, this.width) ||
+        rect.bottom > MAX_ROW || rect.left > rect.right || rect.top > rect.bottom) {
+      throw new Error('Mirror selection coordinates must be within safe document coordinates.')
+    }
+    const width = rect.right - rect.left + 1, height = rect.bottom - rect.top + 1
+    const destination = { ...rect }
+    switch (direction) {
+      case 'above':
+        destination.top = Math.max(0, rect.top - height); destination.bottom = rect.top - 1
+        break
+      case 'below':
+        destination.top = rect.bottom + 1
+        destination.bottom = rect.bottom + Math.min(height, MAX_ROW - rect.bottom)
+        break
+      case 'left':
+        destination.left = Math.max(0, rect.left - width); destination.right = rect.left - 1
+        break
+      case 'right':
+        destination.left = rect.right + 1; destination.right = Math.min(this.width - 1, rect.right + width)
+        break
+      default: throw new Error('Unknown mirror direction.')
+    }
+    if (destination.left > destination.right || destination.top > destination.bottom) {
+      throw new Error(`There is no room to mirror ${direction} of this selection.`)
+    }
+    const cells = new Map<string, Cell>()
+    for (const [id, cell] of this.copy(rect).cells) {
+      const point = pointFromKey(id)
+      let x = rect.left + point.x, y = rect.top + point.y
+      if (direction === 'above') y = rect.top - 1 - point.y
+      if (direction === 'below') {
+        const distance = height - 1 - point.y
+        if (distance > MAX_ROW - rect.bottom - 1) continue
+        y = rect.bottom + 1 + distance
+      }
+      if (direction === 'left') x = rect.left - 1 - point.x
+      if (direction === 'right') x = rect.right + width - point.x
+      if (contains(destination, { x, y })) {
+        cells.set(key(x - destination.left, y - destination.top),
+          { ...cell, code: flipCharacter(cell.code, direction === 'above' || direction === 'below' ? 'y' : 'x') })
+      }
+    }
+    const clippedWidth = destination.right - destination.left + 1
+    const clippedHeight = destination.bottom - destination.top + 1
+    this.paste({ width: clippedWidth, height: clippedHeight, cells }, { x: destination.left, y: destination.top })
+    return { clipped: clippedWidth !== width || clippedHeight !== height }
   }
 }
 

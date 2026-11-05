@@ -79,7 +79,7 @@ environment. Pull requests run checks but cannot deploy. See the
 ### Source licensing
 
 The editor code is distributed under the [MIT license](./LICENSE).
-**Help > About ANSI Workshop** displays version **0.2**, the project and hosted
+**Help > About ANSI Workshop** displays version **0.3**, the project and hosted
 editor links, the complete MIT license, and the font license and attribution.
 The About version follows the major/minor version in `package.json`.
 The bundled source font and derived bitmap remain under their separate
@@ -88,6 +88,19 @@ The bundled source font and derived bitmap remain under their separate
 Bundled ANSI example artwork and reference images are included with the project
 owner's redistribution permission; the editor's MIT license does not relicense
 those third-party assets.
+
+### Release 0.3
+
+Version 0.3 adds editable Bezier paths with Shift axis constraints, iCE colors,
+optional 9px VGA rendering, configurable document columns, persistent Settings,
+app themes, and small-screen layout options. Keyboard editing no longer needs
+canvas focus after palette/menu interactions; arrows wrap within a row, typing
+stops at the last column, and Insert mode shifts cells without discarding art.
+Selection-aware Move, adjacent Mirror copies, enclosed Fill by default, and
+chronological path/artwork undo improve block editing.
+
+Download the [0.3 source archive](https://github.com/wood-commits/ansi-workshop/archive/refs/tags/v0.3.zip)
+and follow Run locally above.
 
 ### Release 0.2
 
@@ -214,6 +227,10 @@ without another click. Hovering with all menus closed does not open one.
   click-drag a new node to create mirrored cubic Bezier handles. Click the first
   node or Close path to close the outline. Closing does not apply it: nodes and
   circular handles remain individually draggable until Finish path or Enter.
+  Hold Shift to add horizontal/vertical straight segments, constrain node
+  movement, or align a handle with its anchor. Axis choice uses VGA proportions.
+  Shift-clicking the first node adds a corner if a diagonal closure would be
+  needed; click it again to close along the other axis.
   Finish also closes an open path. Select a node by clicking it or using the
   Node selector; Delete node, Delete, or Backspace removes the selected node.
   Make curve creates smooth mirrored handles; Make corner collapses them.
@@ -230,14 +247,21 @@ without another click. Hovering with all menus closed does not open one.
   bitmap-based approximation, not exact glyph clipping. Self-intersections use
   even-odd filling. Undo/redo covers node additions, edits, movement and closure.
   Undo after Finish removes its cell edits and restores the editable draft;
-  Redo reapplies it. Drafts are not exported or saved.
+  Redo reapplies the finished path. Deleting or undoing the last node leaves draft history available until the
+  next actual artwork edit. That edit starts a fresh document-history branch,
+  so subsequent Undo/Redo targets the new artwork rather than old path nodes.
+  Drafts are not exported or saved.
 - **Position cursor:** choose Cursor, then click a cell to move without painting.
   Or hold Alt and click with any tool to reposition without switching tools.
   Cursor-only clicks clear the selection without changing art or undo/redo history.
   Dragging after a cursor-only click does not paint or select; typing and F-keys
   still work normally at the new position.
-- **Move shapes:** choose Move, click any painted cell, and drag to reposition
-  all side-connected painted cells, regardless of color or glyph. Colored
+- **Move shapes or selections:** with an active selection, choose Move and drag
+  to reposition the whole rectangle, including disconnected art and blank cells.
+  Blank cells erase destination art, just like opaque block paste. The rectangle
+  stays within document boundaries, including its blank margins, and remains
+  selected at its new position. Without a selection, click any painted cell and
+  drag to reposition all side-connected painted cells, regardless of color or glyph. Colored
   spaces move too; diagonal-only neighbors and disconnected art stay put.
   Both canvases preview the move without changing the document. The whole
   shape stops at the canvas's left/top/right and safe-coordinate boundaries
@@ -271,7 +295,8 @@ without another click. Hovering with all menus closed does not open one.
   Both canvases show a live preview and a line guide. Release places one undo
   step; Escape, pointer cancellation, or focus loss discards it. A click without
   a line changes nothing. Alt+click still positions the cursor.
-- **Fill:** choose Fill and select its behavior. Recolor shape uses the selected
+- **Fill:** starts in **Fill enclosed blank area** mode; the chosen mode stays
+  active across tool switches for this session. Recolor shape uses the selected
   foreground color on a matching connected region, using the same color and
   block-family matching as Gradient. Shading becomes solid full blocks; half
   blocks, text glyphs, and original backgrounds stay intact. Fill enclosed blank
@@ -292,12 +317,29 @@ without another click. Hovering with all menus closed does not open one.
   movement does not sample more cells. With Fill or Eyedropper selected,
   Alt+click still only positions the cursor, keyboard editing remains available,
   and the VGA preview keeps its usual click-to-position/drag-to-select behavior.
-- **Keyboard:** focus the canvas, then use arrows, Home/End, Page Up/Down,
+- **Keyboard:** use arrows, Home/End, Page Up/Down,
   Enter, Backspace/Delete, or type printable CP437 text. Column and row numbers
-  in the bottom status bar are one-based.
+  in the bottom status bar are one-based. Editing remains available after palette,
+  toolbar, and menu clicks without refocusing the canvas. Form fields, select
+  controls, dialogs, scrollbars, and button/menu activation retain native keys.
+  Left/Right wrap between the first and last columns on the same row.
+  Typing or placing a glyph at the last column keeps the cursor there; use
+  Enter to start the next row.
+- **Insert mode:** press **Insert** to toggle keyboard typing and F-key placement
+  between overwrite (default **OVR**) and insert (**INS**), shown in the status bar.
+  Insert places the new character before the existing cursor cell, shifts the
+  rest of that row one column right, then advances the cursor. Colors, colored
+  spaces, and blank gaps move with their cells; other rows stay unchanged.
+  If the last column contains artwork, insertion fails visibly without changing
+  the row, cursor, or history. Clear that column or return to overwrite mode.
+  Each insertion is one undo step. Mouse drawing, paste, Backspace and Delete
+  keep their existing behavior. The mode survives tool switches and New/Open
+  for this session, but is not saved in Settings and resets on reload.
 - **Function keys:** F1-F12 place the corresponding palette glyph and advance
-  the cursor. Switch the Character set selector to change the mappings.
+  the cursor unless already at the last column. Switch the Character set selector to change the mappings.
   Clicking a palette tile selects the mouse brush without placing it.
+  The selected tile has a highlighted border/background; its glyph uses the
+  same neutral color as the other tiles.
   Some browser/OS-reserved F-keys may require a keyboard Fn modifier or cannot
   be intercepted; the clickable palette is always available.
   Blocks & shading uses the classic order: F1 light shade (176), F2 medium
@@ -337,6 +379,11 @@ without another click. Hovering with all menus closed does not open one.
   Edit contains copy, cut, paste at cursor, horizontal/vertical flips, delete,
   and deselect. Paste is opaque, including blank cells, and clips at the document's last column.
   Flip operations mirror recognized directional glyphs as well as positions.
+  **Edit > Mirror > Above / Below / Left / Right** keeps the original selection
+  and adds an adjacent reflected copy, including directional glyph reflection.
+  Copies are opaque, including blank cells, and clip to the available space at
+  document edges. An entirely clipped copy reports an error without editing.
+  The original selection remains selected; each Mirror is one undo step.
   The clipboard is internal to this page, not the operating-system clipboard.
 - **Undo/redo:** each pointer stroke or block action is one undo step.
   Ctrl+Z undoes; Ctrl+Shift+Z or Ctrl+Y redoes (Cmd on macOS).

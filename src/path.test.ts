@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Editor, MAX_ROW, pointFromKey } from './model'
 import { rgbColor } from './colors'
 import { ansiChunks } from './export'
-import { convertPathNode, hitPathSegment, insertPathNode, linkPathHandles, movePathHandle, pathContainsPoint, rasterizePath, removePathNode, translatePath, type BezierPath, type PathNode } from './path'
+import { appendPathNode, constrainPathPoint, convertPathNode, hitPathSegment, insertPathNode, linkPathHandles, movePathHandle, pathContainsPoint, rasterizePath, removePathNode, translatePath, type BezierPath, type PathNode } from './path'
 
 const node = (x: number, y: number): PathNode => ({
   point: { x, y }, incoming: { x, y }, outgoing: { x, y },
@@ -11,6 +11,49 @@ const box = (left: number, top: number, right: number, bottom: number, origin = 
   origin, closed: true, nodes: [node(left, top), node(right, top), node(right, bottom), node(left, bottom)],
 })
 const ink = { fg: 14, bg: 0 }
+
+describe('path axis constraints', () => {
+  it('chooses the nearest axis in VGA proportions, including reverse and fractional positions', () => {
+    const origin = { x: 5, y: 3 }
+    expect(constrainPathPoint({ x: 15, y: 6 }, origin)).toEqual({ x: 15, y: 3 })
+    expect(constrainPathPoint({ x: 9, y: 6 }, origin)).toEqual({ x: 5, y: 6 })
+    expect(constrainPathPoint({ x: 9, y: 5 }, origin)).toEqual({ x: 9, y: 3 })
+    expect(constrainPathPoint({ x: 1, y: 2.5 }, origin)).toEqual({ x: 1, y: 3 })
+    expect(constrainPathPoint({ x: 5.25, y: 1.5 }, origin)).toEqual({ x: 5, y: 1.5 })
+    expect(() => constrainPathPoint({ x: NaN, y: 0 }, origin)).toThrow(/finite/)
+  })
+  it('appends a straight constrained segment without changing earlier curves or its source', () => {
+    const previous = { point: { x: 5, y: 3 }, incoming: { x: 2, y: 2 }, outgoing: { x: 8, y: 4 }, linked: true }
+    const source = { origin: MAX_ROW - 20, closed: false, nodes: [previous] }
+    const before = structuredClone(source)
+    const result = appendPathNode(source, { x: 15, y: 6 }, true, { x: 17, y: 8 })
+    expect(result.origin).toBe(source.origin)
+    expect(result.nodes[0]).toEqual({ ...previous, outgoing: previous.point, linked: false })
+    expect(result.nodes[1].point).toEqual({ x: 15, y: 3 })
+    expect(result.nodes[1].incoming).toEqual(result.nodes[1].point)
+    expect(result.nodes[1].outgoing).toEqual({ x: 15, y: 5 })
+    const clicked = appendPathNode(source, { x: 15, y: 6 }, true)
+    expect(clicked.nodes[1].outgoing).toEqual(clicked.nodes[1].point)
+    const distant = appendPathNode({ origin: 0, closed: false, nodes: [node(5, MAX_ROW - 2)] },
+      { x: 10, y: MAX_ROW - 1 }, true).nodes[1]
+    expect(distant.point).toEqual({ x: 10, y: MAX_ROW - 2 })
+    expect(distant.outgoing).toEqual(distant.point)
+    expect(source).toEqual(before)
+  })
+  it('keeps unconstrained click-drag handles mirrored and constrains first-node handles without a predecessor', () => {
+    const path = { origin: 0, closed: false, nodes: [] }
+    const free = appendPathNode(path, { x: 5, y: 3 }, false, { x: 8, y: 4 })
+    expect(free.nodes[0].outgoing).toEqual({ x: 8, y: 4 })
+    expect(free.nodes[0].incoming).toEqual({ x: 2, y: 2 })
+    const snapped = appendPathNode(path, { x: 5, y: 3 }, true, { x: 8, y: 4 })
+    expect(snapped.nodes[0].outgoing).toEqual({ x: 8, y: 3 })
+    expect(snapped.nodes[0].incoming).toEqual({ x: 2, y: 3 })
+    const distant = appendPathNode(path, { x: 5, y: MAX_ROW - 2 }, false, { x: 8, y: MAX_ROW - 1 }).nodes[0]
+    expect(distant.incoming).toEqual({ x: 2, y: MAX_ROW - 3 })
+    expect(() => appendPathNode(box(0, 0, 2, 2), { x: 5, y: 5 })).toThrow(/closed/)
+    expect(() => appendPathNode(path, { x: 5, y: 5 }, false, { x: Infinity, y: 5 })).toThrow(/finite/)
+  })
+})
 
 describe('Bezier path rasterization', () => {
   it('inserts on straight, curved and closing segments without changing their geometry', () => {

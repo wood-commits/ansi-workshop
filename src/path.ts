@@ -6,6 +6,29 @@ import { glyphMask } from './vgaFont'
 export interface PathNode { point: Point; incoming: Point; outgoing: Point; linked?: boolean }
 export interface BezierPath { origin: number; nodes: PathNode[]; closed: boolean }
 
+export function constrainPathPoint(point: Point, origin: Point): Point {
+  if (![point.x, point.y, origin.x, origin.y].every(Number.isFinite)) {
+    throw new Error('Path constraints require finite coordinates.')
+  }
+  return Math.abs(point.x - origin.x) >= 2 * Math.abs(point.y - origin.y)
+    ? { x: point.x, y: origin.y } : { x: origin.x, y: point.y }
+}
+
+export function appendPathNode(path: BezierPath, position: Point, constrained = false, handle = position): BezierPath {
+  if (path.closed) throw new Error('Cannot append a node to a closed path.')
+  if (![position.x, position.y, handle.x, handle.y].every(Number.isFinite)) throw new Error('Path nodes require finite coordinates.')
+  const previous = path.nodes.at(-1)
+  const point = constrained && previous ? constrainPathPoint(position, previous.point) : { ...position }
+  const outgoing = constrained
+    ? constrainPathPoint({ x: point.x + (handle.x - position.x), y: point.y + (handle.y - position.y) }, point)
+    : { ...handle }
+  const incoming = constrained && previous ? point : { x: point.x - (outgoing.x - point.x), y: point.y - (outgoing.y - point.y) }
+  const nodes = constrained && previous
+    ? path.nodes.map((node, index) => index === path.nodes.length - 1 ? { ...node, outgoing: node.point, linked: false } : node)
+    : path.nodes
+  return { ...path, nodes: [...nodes, { point, incoming, outgoing }] }
+}
+
 const SAMPLE_WIDTH = 8
 const SAMPLE_HEIGHT = 16
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })

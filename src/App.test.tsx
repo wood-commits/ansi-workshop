@@ -11,6 +11,7 @@ import { Editor, MAX_ROW, pointFromKey, type Cell } from './model'
 import { rasterizePrimitive, subtractPrimitive, type PrimitiveKind } from './primitives'
 import { gradientRegion, rasterizeGradient, type GradientKind } from './gradient'
 import { bucketFill, type FillMode } from './fill'
+import * as paths from './path'
 import fontLicense from './assets/fonts/LICENSE.txt?raw'
 import fontNotice from './assets/fonts/NOTICE.txt?raw'
 import editorLicense from '../LICENSE?raw'
@@ -201,7 +202,7 @@ describe('small-screen layout Settings', () => {
 })
 describe('document and character width options', () => {
   const settings = () => fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
-  it('creates wide iCE art, draws at the right edge, wraps typing and preserves bright backgrounds on save/history', async () => {
+  it('creates wide iCE art, stays at the right edge when typing and preserves bright backgrounds on save/history', async () => {
     render(<App />)
     settings()
     fireEvent.change(screen.getByLabelText('New/Open columns'), { target: { value: '132' } })
@@ -217,7 +218,8 @@ describe('document and character width options', () => {
     fireEvent.pointerMove(canvas(), { clientX: 42 + 131 * 9 + 4, clientY: 8 })
     fireEvent.pointerUp(canvas(), { clientX: 42 + 131 * 9 + 4, clientY: 8 })
     press('End'); press('A')
-    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 2')
+    expect(canvas().getAttribute('aria-label')).toContain('column 132, row 1')
+    press('Enter')
     press('F4')
     const snapshot = await saveSnapshot()
     expect(snapshot.get('130,0')).toEqual({ code: 219, fg: 7, bg: 14 })
@@ -250,7 +252,7 @@ describe('document and character width options', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Swap foreground and background' }))
     expect(screen.getByRole('button', { name: 'Background Yellow' }).getAttribute('aria-pressed')).toBe('true')
     press('End'); press('F4')
-    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 2')
+    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 1')
   })
 
   it('opens auto-detected document options and displays the actual width and mode', async () => {
@@ -283,15 +285,107 @@ describe('document and character width options', () => {
   })
 })
 describe('editable Bezier paths', () => {
-  const clickPath = (x: number, y: number) => {
-    fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + x * 8, clientY: y * 16 })
-    fireEvent.pointerUp(canvas(), { clientX: 42 + x * 8, clientY: y * 16 })
+  const clickPath = (x: number, y: number, shiftKey = false) => {
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 42 + x * 8, clientY: y * 16, shiftKey })
+    fireEvent.pointerUp(canvas(), { clientX: 42 + x * 8, clientY: y * 16, shiftKey })
   }
   const startPath = () => {
     fireEvent.click(screen.getByRole('button', { name: 'Path' }))
     clickPath(5, 5); clickPath(15, 5); clickPath(15, 15); clickPath(5, 15)
   }
 
+  it('uses Shift to draw exact horizontal and vertical path segments, including closure', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Path' }))
+    clickPath(5, 5); clickPath(15, 8, true); clickPath(13, 15, true); clickPath(5, 17, true)
+    clickPath(5, 5, true); press('Enter')
+    const result = await saveSnapshot()
+    expect(result.size).toBe(100)
+    expect([...result].every(([id, cell]) => {
+      const p = pointFromKey(id)
+      return p.x >= 5 && p.x < 15 && p.y >= 5 && p.y < 15 && cell.code === 219
+    })).toBe(true)
+  })
+  it('adds an orthogonal corner rather than closing a diagonal segment with Shift', () => {
+    render(<App />)
+    const rasterize = vi.spyOn(paths, 'rasterizePath')
+    fireEvent.click(screen.getByRole('button', { name: 'Path' }))
+    clickPath(5, 5); clickPath(15, 5); clickPath(12, 12); clickPath(5, 5, true)
+    expect(canvas().getAttribute('data-path-closed')).toBe('false')
+    expect(canvas().getAttribute('data-path-nodes')).toBe('4')
+    clickPath(5, 5, true); press('Enter')
+    const finished = rasterize.mock.calls.at(-1)![0]
+    expect(finished.nodes[3].point).toEqual({ x: 12, y: 0 })
+    expect(finished.nodes[3].outgoing).toEqual(finished.nodes[3].point)
+    expect(finished.nodes[0].incoming).toEqual(finished.nodes[0].point)
+  })
+  it('constrains an existing node drag, takes the final release coordinates, and undoes it as one gesture', () => {
+    render(<App />)
+    const rasterize = vi.spyOn(paths, 'rasterizePath')
+    startPath()
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 162, clientY: 80 })
+    fireEvent.pointerMove(canvas(), { clientX: 186, clientY: 112, shiftKey: true })
+    fireEvent.pointerUp(canvas(), { clientX: 202, clientY: 96, shiftKey: true })
+    press('Enter')
+    expect(rasterize.mock.calls.at(-1)![0].nodes[1].point).toEqual({ x: 20, y: 0 })
+    press('z', { ctrlKey: true }); press('z', { ctrlKey: true }); press('Enter')
+    expect(rasterize.mock.calls.at(-1)![0].nodes[1].point).toEqual({ x: 15, y: 0 })
+  })
+  it.each([true, false])('constrains curve handles relative to their node and honors release-only Shift changes (%s)', shiftKey => {
+    render(<App />)
+    const rasterize = vi.spyOn(paths, 'rasterizePath')
+    fireEvent.click(screen.getByRole('button', { name: 'Path' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 82, clientY: 80 })
+    fireEvent.pointerUp(canvas(), { clientX: 106, clientY: 48 })
+    clickPath(15, 5); clickPath(15, 15)
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 106, clientY: 48 })
+    fireEvent.pointerMove(canvas(), { clientX: 130, clientY: 64, shiftKey: true })
+    fireEvent.pointerUp(canvas(), { clientX: 130, clientY: 64, shiftKey })
+    press('Enter')
+    expect(rasterize.mock.calls.at(-1)![0].nodes[0].outgoing).toEqual({ x: 11, y: shiftKey ? 0 : -1 })
+  })
+  it.each([true, false])('updates a new segment when Shift changes without pointer movement and preserves its earlier curve (%s)', shiftKey => {
+    render(<App />)
+    const rasterize = vi.spyOn(paths, 'rasterizePath')
+    fireEvent.click(screen.getByRole('button', { name: 'Path' }))
+    clickPath(5, 5)
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 162, clientY: 80 })
+    fireEvent.pointerUp(canvas(), { clientX: 178, clientY: 48 })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 186, clientY: 240, shiftKey: true })
+    fireEvent.pointerMove(canvas(), { clientX: 218, clientY: 256, shiftKey: true })
+    fireEvent.keyUp(canvas(), { key: 'Shift' })
+    if (shiftKey) fireEvent.keyDown(canvas(), { key: 'Shift', shiftKey: true })
+    fireEvent.pointerUp(canvas(), { clientX: 218, clientY: 256, shiftKey })
+    press('Enter')
+    const nodes = rasterize.mock.calls.at(-1)![0].nodes
+    expect(nodes[1].incoming).toEqual({ x: 13, y: 2 })
+    expect(nodes[1].outgoing).toEqual({ x: shiftKey ? 15 : 17, y: shiftKey ? 0 : -2 })
+    expect(nodes[2].point).toEqual({ x: shiftKey ? 15 : 18, y: 10 })
+    expect(nodes[2].outgoing).toEqual({ x: shiftKey ? 19 : 22, y: shiftKey ? 10 : 11 })
+    expect(nodes[2].incoming).toEqual({ x: shiftKey ? 15 : 14, y: shiftKey ? 10 : 9 })
+  })
+  it('restores the preceding curve when a constrained new-node gesture is canceled', () => {
+    render(<App />)
+    const rasterize = vi.spyOn(paths, 'rasterizePath')
+    fireEvent.click(screen.getByRole('button', { name: 'Path' }))
+    clickPath(5, 5); clickPath(15, 5)
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 162, clientY: 240 })
+    fireEvent.pointerUp(canvas(), { clientX: 162, clientY: 272 })
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 82, clientY: 272, shiftKey: true })
+    fireEvent.pointerCancel(canvas())
+    press('Enter')
+    const nodes = rasterize.mock.calls.at(-1)![0].nodes
+    expect(nodes).toHaveLength(3)
+    expect(nodes[2].outgoing).toEqual({ x: 15, y: 12 })
+  })
+  it('does not add an undo step when Shift changes during an unmoved anchor gesture', () => {
+    render(<App />)
+    startPath()
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 162, clientY: 80, shiftKey: true })
+    fireEvent.pointerUp(canvas(), { clientX: 162, clientY: 80, shiftKey: false })
+    press('z', { ctrlKey: true })
+    expect(canvas().getAttribute('data-path-nodes')).toBe('3')
+  })
   it('undoes and redoes added nodes, closure, and finishing back to the editable draft', async () => {
     render(<App />)
     startPath()
@@ -372,6 +466,61 @@ describe('editable Bezier paths', () => {
     press('Escape')
     press('y', { ctrlKey: true })
     expect((await saveSnapshot()).get('0,0')?.code).toBe(65)
+  })
+
+  it.each(['finish', 'cancel', 'switch', 'delete', 'undo'])('keeps later F-key edits ahead of path history after %s', async exit => {
+    render(<App />)
+    press('F1'); press('F4')
+    startPath()
+    if (exit === 'finish') press('Enter')
+    if (exit === 'cancel') press('Escape')
+    if (exit === 'switch') fireEvent.click(screen.getByRole('button', { name: 'Draw' }))
+    if (exit === 'delete') for (let i = 0; i < 4; i++) press('Delete')
+    if (exit === 'undo') for (let i = 0; i < 4; i++) press('z', { ctrlKey: true })
+    expect(canvas().hasAttribute('data-path-nodes')).toBe(false)
+    const before = await saveSnapshot()
+    press('Home'); press('F6'); press('F7')
+    const after = await saveSnapshot()
+    expect(after.get('0,15')?.code).toBe(220)
+    expect(after.get('1,15')?.code).toBe(221)
+    press('z', { ctrlKey: true })
+    expect(canvas().hasAttribute('data-path-nodes')).toBe(false)
+    expect((await saveSnapshot()).has('1,15')).toBe(false)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(before)
+    press('y', { ctrlKey: true }); press('y', { ctrlKey: true })
+    expect(canvas().hasAttribute('data-path-nodes')).toBe(false)
+    expect(await saveSnapshot()).toEqual(after)
+  })
+
+  it('discards empty draft redo when a new document edit branches history', async () => {
+    render(<App />)
+    press('F1')
+    fireEvent.click(screen.getByRole('button', { name: 'Path' }))
+    clickPath(5, 5); press('z', { ctrlKey: true })
+    press('F4'); press('F6'); press('z', { ctrlKey: true }); press('F7')
+    expect(screen.getByTitle('Redo')).toHaveProperty('disabled', true)
+    press('y', { ctrlKey: true })
+    expect(canvas().hasAttribute('data-path-nodes')).toBe(false)
+    const snapshot = await saveSnapshot()
+    expect(snapshot.get('5,5')?.code).toBe(219)
+    expect(snapshot.has('6,5')).toBe(false)
+    expect(snapshot.get('7,5')?.code).toBe(221)
+  })
+
+  it.each(['delete', 'undo'])('clears empty draft %s history on the first real edit, before a redo shortcut', async exit => {
+    render(<App />)
+    press('F1'); startPath()
+    for (let i = 0; i < 4; i++) press(exit === 'delete' ? 'Delete' : 'z', exit === 'undo' ? { ctrlKey: true } : {})
+    press('F4')
+    expect(screen.getByTitle('Redo')).toHaveProperty('disabled', true)
+    press('y', { ctrlKey: true })
+    expect(canvas().hasAttribute('data-path-nodes')).toBe(false)
+    expect((await saveSnapshot()).get('5,15')?.code).toBe(219)
+    press('z', { ctrlKey: true })
+    expect((await saveSnapshot()).has('5,15')).toBe(false)
+    press('y', { ctrlKey: true })
+    expect((await saveSnapshot()).get('5,15')?.code).toBe(219)
   })
 
   it('branches after undoing Finish and preserves the identity of a saved result', async () => {
@@ -1317,6 +1466,85 @@ describe('editor UI', () => {
     expect(screen.queryByText('untitled.ans *')).toBeNull()
   })
 
+  it('moves an active selection including disconnected cells and blank spaces, then keeps it selected at the destination', async () => {
+    const source = new Map([
+      ['1,1', { code: 65, fg: 14, bg: 0 }], ['4,1', { code: 32, fg: 7, bg: 3 }],
+      ['0,1', { code: 90, fg: 4, bg: 0 }], ['6,3', { code: 68, fg: 2, bg: 0 }],
+    ])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor(); fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 57, clientY: 25 })
+    fireEvent.pointerMove(canvas(), { clientX: 87, clientY: 45 })
+    fireEvent.pointerUp(canvas(), { clientX: 87, clientY: 45 })
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    const paint = vi.spyOn(Editor.prototype, 'paint')
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 45 })
+    fireEvent.pointerMove(canvas(), { clientX: 97, clientY: 65 })
+    expect(paint).not.toHaveBeenCalled()
+    expect(screen.getByText('4 × 2 selected')).toBeTruthy()
+    fireEvent.pointerUp(canvas(), { clientX: 107, clientY: 85 })
+    const expected = new Map([
+      ['0,1', source.get('0,1')!], ['5,3', source.get('1,1')!], ['8,3', source.get('4,1')!],
+    ])
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+    press('c', { ctrlKey: true }); press('Home'); press('v', { ctrlKey: true })
+    const pasted = await saveSnapshot()
+    expect(pasted.get('0,4')).toEqual(source.get('1,1'))
+    expect(pasted.get('3,4')).toEqual(source.get('4,1'))
+  })
+
+  it.each(['cancel', 'blur', 'lost capture'])('preserves art, selection and redo when a selection move ends with %s', async action => {
+    renderClassicEditor()
+    press('A'); press('B'); press('z', { ctrlKey: true })
+    press('Home'); press('ArrowRight', { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 57, clientY: 5 })
+    fireEvent.pointerMove(canvas(), { clientX: 97, clientY: 65 })
+    if (action === 'cancel') fireEvent.pointerCancel(canvas())
+    if (action === 'blur') fireEvent.blur(window)
+    if (action === 'lost capture') fireEvent.lostPointerCapture(canvas())
+    fireEvent.pointerUp(canvas(), { clientX: 97, clientY: 65 })
+    expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 65, fg: 7, bg: 0 }]]))
+    expect(screen.getByText('2 × 1 selected')).toBeTruthy()
+    expect(screen.getByTitle('Redo')).toHaveProperty('disabled', false)
+    press('c', { ctrlKey: true }); press('Home'); press('ArrowUp'); press('ArrowUp'); press('v', { ctrlKey: true })
+    expect((await saveSnapshot()).get('0,1')?.code).toBe(65)
+  })
+
+  it('starts Fill in enclosed mode and retains an explicitly chosen mode across tool switches', () => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }))
+    expect(screen.getByLabelText('Fill behavior')).toHaveProperty('value', 'enclosed')
+    fireEvent.change(screen.getByLabelText('Fill behavior'), { target: { value: 'shape' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Draw' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }))
+    expect(screen.getByLabelText('Fill behavior')).toHaveProperty('value', 'shape')
+  })
+  it('fills a closed blank area without requiring a mode change', async () => {
+    const outline = { code: 219, fg: 3, bg: 0 }
+    const source = new Map([
+      ['0,0', outline], ['1,0', outline], ['2,0', outline], ['0,1', outline],
+      ['2,1', outline], ['0,2', outline], ['1,2', outline], ['2,2', outline],
+    ])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor(); fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByLabelText('Foreground Yellow'))
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 57, clientY: 25 })
+    fireEvent.pointerUp(canvas(), { clientX: 57, clientY: 25 })
+    expect(await saveSnapshot()).toEqual(new Map([...source, ['1,1', { code: 219, fg: 14, bg: 0 }]]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+  })
+
   it('moves a multicolor connected shape with a nonmutating preview, final release coordinates, and one undo step', async () => {
     const source = new Map([
       ['1,1', { code: 219, fg: 14, bg: 0 }], ['2,1', { code: 223, fg: 4, bg: 2 }],
@@ -2180,6 +2408,95 @@ describe('editor UI', () => {
     expect(snapshot.get('2,1')).toEqual({ code: 65, fg: 7, bg: 0 })
     expect(screen.getByRole('status').textContent).toBe('Saved test.ans.')
   })
+  it('toggles insert mode for typing and F-keys, advancing the cursor and undoing each insertion once', async () => {
+    renderClassicEditor()
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('OVR')
+    press('A'); press('B'); press('Home'); press('ArrowRight'); press('Insert')
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('INS')
+    press('X'); press('F6')
+    const expected = new Map([
+      ['0,0', { code: 65, fg: 7, bg: 0 }], ['1,0', { code: 88, fg: 7, bg: 0 }],
+      ['2,0', { code: 220, fg: 7, bg: 0 }], ['3,0', { code: 66, fg: 7, bg: 0 }],
+    ])
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 04 ROW 01')
+    expect(await saveSnapshot()).toEqual(expected)
+    press('z', { ctrlKey: true })
+    expect((await saveSnapshot()).get('2,0')?.code).toBe(66)
+    press('y', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(expected)
+    press('Insert'); press('Home'); press('ArrowRight'); press('Z')
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('OVR')
+    expect((await saveSnapshot()).get('2,0')?.code).toBe(220)
+  })
+  it.each([{ code: 219, fg: 14, bg: 0 }, { code: 32, fg: 7, bg: 1 }])('refuses insertion visibly without moving the cursor or discarding %o at the row edge', async tail => {
+    const source = new Map([['0,0', { code: 65, fg: 7, bg: 0 }], ['79,0', tail]])
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor(); fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    press('Insert'); press('X')
+    expect(screen.getByRole('alert').textContent).toContain('discard artwork')
+    expect(log).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+    expect(await saveSnapshot()).toEqual(source)
+    press('Insert'); press('B')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect((await saveSnapshot()).get('0,0')?.code).toBe(66)
+    expect((await saveSnapshot()).get('79,0')).toEqual(tail)
+  })
+  it('keeps Insert native in form controls and with modifiers, and ignores auto-repeat', () => {
+    renderClassicEditor()
+    for (const target of [screen.getByLabelText('Go to row'), screen.getByLabelText('Function key character set')]) {
+      const event = new KeyboardEvent('keydown', { key: 'Insert', bubbles: true, cancelable: true })
+      fireEvent(target, event)
+      expect(event.defaultPrevented).toBe(false)
+      expect(screen.getByLabelText('Typing mode').textContent).toBe('OVR')
+    }
+    for (const modifier of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      const event = new KeyboardEvent('keydown', { key: 'Insert', ...modifier, bubbles: true, cancelable: true })
+      fireEvent(canvas(), event)
+      expect(event.defaultPrevented).toBe(false)
+    }
+    press('Insert'); press('Insert', { repeat: true })
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('INS')
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+  })
+  it('keeps mouse drawing in overwrite mode even when keyboard Insert is on', async () => {
+    renderClassicEditor()
+    press('A'); press('B'); press('Insert')
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 47, clientY: 5 })
+    fireEvent.pointerUp(canvas(), { clientX: 47, clientY: 5 })
+    expect((await saveSnapshot()).get('1,0')?.code).toBe(66)
+    expect((await saveSnapshot()).size).toBe(2)
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('INS')
+  })
+  it('keeps Insert mode session-only across tool switches and New/Open without requiring canvas focus', async () => {
+    const first = renderClassicEditor()
+    const preferences = localStorage.getItem('ansi-workshop.settings')
+    fireEvent.keyDown(screen.getByLabelText('Foreground Yellow'), { key: 'Insert' })
+    fireEvent.click(screen.getByRole('button', { name: 'Erase' }))
+    press('n', { ctrlKey: true })
+    fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('INS')
+    expect(localStorage.getItem('ansi-workshop.settings')).toBe(preferences)
+    first.unmount(); render(<App />)
+    expect(screen.getByLabelText('Typing mode').textContent).toBe('OVR')
+  })
+  it('inserts at the last column only when it is blank, without advancing to the next row', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    renderClassicEditor()
+    press('Insert'); press('End'); press('F4')
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 80 ROW 01')
+    press('A')
+    expect(screen.getByRole('alert').textContent).toContain('discard artwork')
+    expect(log).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 80 ROW 01')
+    expect(await saveSnapshot()).toEqual(new Map([['79,0', { code: 219, fg: 7, bg: 0 }]]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
+  })
   it('switches function palettes and ANSI foreground/background', async () => {
     renderClassicEditor()
     fireEvent.change(screen.getByLabelText('Function key character set'), { target: { value: '1' } })
@@ -2188,6 +2505,90 @@ describe('editor UI', () => {
     press('F1')
     const snapshot = await saveSnapshot()
     expect(snapshot.get('0,0')).toEqual({ code: 218, fg: 14, bg: 1 })
+  })
+  it('edits after palette, toolbar and menu interactions without refocusing a canvas', async () => {
+    renderClassicEditor()
+    const color = screen.getByLabelText('Foreground Yellow')
+    fireEvent.click(color); color.focus()
+    fireEvent.keyDown(color, { key: 'ArrowRight' })
+    fireEvent.keyDown(color, { key: 'F4' })
+    const draw = screen.getByRole('button', { name: 'Draw' })
+    fireEvent.click(draw); draw.focus()
+    fireEvent.keyDown(draw, { key: 'A' })
+    const menu = screen.getByText('Settings', { selector: 'summary' })
+    fireEvent.click(menu); fireEvent.click(menu); menu.focus()
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    fireEvent.keyDown(menu, { key: 'F6' })
+    fireEvent.keyDown(document.body, { key: 'B' })
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 06 ROW 02')
+    const snapshot = await saveSnapshot()
+    expect([...snapshot]).toEqual([
+      ['1,0', { code: 219, fg: 14, bg: 0 }],
+      ['2,0', { code: 65, fg: 14, bg: 0 }],
+      ['3,1', { code: 220, fg: 14, bg: 0 }],
+      ['4,1', { code: 66, fg: 14, bg: 0 }],
+    ])
+  })
+  it.each(['input', 'select', 'textarea', 'contenteditable', 'dialog', 'scrollbar'])('leaves editing keys native in %s', targetKind => {
+    renderClassicEditor()
+    let target: HTMLElement
+    if (targetKind === 'input') target = screen.getByLabelText('Go to row')
+    else if (targetKind === 'select') target = screen.getByLabelText('Function key character set')
+    else if (targetKind === 'scrollbar') target = screen.getByRole('scrollbar', { name: 'Canvas rows' })
+    else {
+      target = document.createElement(targetKind === 'contenteditable' ? 'div' : targetKind)
+      if (targetKind === 'contenteditable') target.setAttribute('contenteditable', 'true')
+      canvas().parentElement!.append(target)
+    }
+    for (const key of ['ArrowRight', 'F4', 'A']) fireEvent.keyDown(target, { key })
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+  })
+  it('preserves control activation, Ctrl+arrows, composing and already handled keys outside canvases', () => {
+    renderClassicEditor()
+    const target = screen.getByLabelText('Foreground Yellow')
+    for (const extra of [
+      { key: 'Enter' }, { key: ' ' }, { key: 'ArrowRight', ctrlKey: true },
+      { key: 'A', isComposing: true }, { key: 'A', altKey: true },
+    ]) {
+      const event = new KeyboardEvent('keydown', { ...extra, bubbles: true, cancelable: true })
+      fireEvent(target, event)
+      expect(event.defaultPrevented).toBe(false)
+    }
+    const handled = new KeyboardEvent('keydown', { key: 'F4', bubbles: true, cancelable: true })
+    handled.preventDefault(); fireEvent(target, handled)
+    expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 01 ROW 01')
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+  })
+  it('handles F-keys once before host window shortcuts can intercept them', async () => {
+    renderClassicEditor()
+    const intercept = (event: KeyboardEvent) => { if (event.key === 'F4') event.preventDefault() }
+    window.addEventListener('keydown', intercept)
+    try {
+      fireEvent.keyDown(screen.getByLabelText('Foreground Yellow'), { key: 'F4' })
+      expect(screen.getByLabelText('Cursor position').textContent).toBe('COL 02 ROW 01')
+      expect(await saveSnapshot()).toEqual(new Map([['0,0', { code: 219, fg: 7, bg: 0 }]]))
+    } finally { window.removeEventListener('keydown', intercept) }
+  })
+  it.each([1, 80, 132, 512])('wraps horizontal arrows on the same row and keeps repeated placement at column %i', async width => {
+    renderClassicEditor()
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    fireEvent.change(screen.getByLabelText('New/Open columns'), { target: { value: String(width) } })
+    fireEvent.click(screen.getByText('Settings', { selector: 'summary' }))
+    press('n', { ctrlKey: true })
+    press('ArrowLeft')
+    expect(canvas().getAttribute('aria-label')).toContain(`column ${width}, row 1`)
+    press('ArrowRight')
+    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 1')
+    press('End'); press('F4'); press('F6'); press('A')
+    expect(canvas().getAttribute('aria-label')).toContain(`column ${width}, row 1`)
+    expect(await saveSnapshot()).toEqual(new Map([[`${width - 1},0`, { code: 65, fg: 7, bg: 0 }]]))
+    press('z', { ctrlKey: true })
+    expect((await saveSnapshot()).get(`${width - 1},0`)?.code).toBe(220)
+    press('ArrowRight', { shiftKey: true })
+    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 1')
+    press('Enter')
+    expect(canvas().getAttribute('aria-label')).toContain('column 1, row 2')
   })
   it.each([
     { ctrlKey: true },
@@ -2269,6 +2670,51 @@ describe('editor UI', () => {
     const snapshot = await saveSnapshot()
     expect(snapshot.get('1,1')?.code).toBe(221)
     expect(screen.getByRole('status').textContent).toBe('Saved test.ans.')
+  })
+  it.each([
+    { direction: 'Above', target: '2,1', code: 221 },
+    { direction: 'Below', target: '2,5', code: 221 },
+    { direction: 'Left', target: '1,2', code: 222 },
+    { direction: 'Right', target: '5,2', code: 222 },
+  ])('mirrors a selected block $direction from the Edit submenu and restores it with one undo', async ({ direction, target, code }) => {
+    const source = new Map([['2,2', { code: 221, fg: 14, bg: 1 }]])
+    vi.mocked(readAnsi).mockResolvedValue(source)
+    renderClassicEditor(); fileAction('open')
+    await screen.findByText('opened.ans', { selector: '.document-title' })
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.pointerDown(canvas(), { button: 0, clientX: 67, clientY: 45 })
+    fireEvent.pointerMove(canvas(), { clientX: 77, clientY: 65 })
+    fireEvent.pointerUp(canvas(), { clientX: 77, clientY: 65 })
+    fireEvent.click(screen.getByText('Edit', { selector: 'summary' }))
+    fireEvent.click(screen.getByText('Mirror', { selector: 'summary' }))
+    const options = screen.getByRole('group', { name: 'Mirror block' })
+    expect(within(options).getAllByRole('button').map(button => button.textContent)).toEqual(['Above', 'Below', 'Left', 'Right'])
+    fireEvent.click(within(options).getByRole('button', { name: direction }))
+    expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
+    expect(screen.getByText('2 × 2 selected')).toBeTruthy()
+    expect(await saveSnapshot()).toEqual(new Map([...source, [target, { code, fg: 14, bg: 1 }]]))
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(source)
+    expect(screen.getByTitle('Undo')).toHaveProperty('disabled', true)
+  })
+  it('disables Mirror without a selection and reports an entirely clipped copy without changing art', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    renderClassicEditor()
+    fireEvent.click(screen.getByText('Edit', { selector: 'summary' }))
+    const menu = screen.getByText('Mirror', { selector: 'summary' })
+    expect(menu.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(menu)
+    expect(menu.closest('details')?.open).toBe(false)
+    fireEvent.click(screen.getByText('Edit', { selector: 'summary' }))
+    press('F4'); press('Home'); press('ArrowRight', { shiftKey: true })
+    fireEvent.click(screen.getByText('Edit', { selector: 'summary' }))
+    fireEvent.click(menu)
+    fireEvent.click(screen.getByRole('button', { name: 'Above' }))
+    expect(screen.getByRole('alert').textContent).toContain('no room')
+    expect(log).toHaveBeenCalledOnce()
+    expect((await saveSnapshot()).get('0,0')?.code).toBe(219)
+    press('z', { ctrlKey: true })
+    expect(await saveSnapshot()).toEqual(new Map())
   })
   it('groups a drag stroke into one undo and interpolates skipped mouse positions', async () => {
     renderClassicEditor()
@@ -2600,7 +3046,7 @@ describe('editor UI', () => {
       expect(screen.queryByText('untitled.ans *')).toBeNull()
     }
   })
-  it('shows version 0.2, project links, and complete editor and font licenses in About without editing art', () => {
+  it('shows version 0.3, project links, and complete editor and font licenses in About without editing art', () => {
     renderClassicEditor()
     const help = screen.getByText('Help', { selector: 'summary' })
     const settings = screen.getByText('Settings', { selector: 'summary' })
@@ -2609,7 +3055,7 @@ describe('editor UI', () => {
       fireEvent.click(screen.getByRole('button', { name: 'About ANSI Workshop' }))
       const dialog = screen.getByRole('dialog', { name: 'About ANSI Workshop' })
       expect(document.querySelectorAll('.menu-bar details[open]')).toHaveLength(0)
-      expect(within(dialog).getByText('Version 0.2')).not.toBeNull()
+      expect(within(dialog).getByText('Version 0.3')).not.toBeNull()
       const project = within(dialog).getByRole('link', { name: 'GitHub project' })
       expect(project.getAttribute('href')).toBe('https://github.com/wood-commits/ansi-workshop')
       expect(project.getAttribute('target')).toBe('_blank')
@@ -2632,7 +3078,7 @@ describe('editor UI', () => {
     fireEvent.click(settings)
     fireEvent.click(screen.getByRole('button', { name: 'IBM font license and notices' }))
     const dialog = screen.getByRole('dialog', { name: 'IBM font license and notices' })
-    expect(within(dialog).queryByText('Version 0.2')).toBeNull()
+    expect(within(dialog).queryByText('Version 0.3')).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(document.activeElement).toBe(settings)
   })

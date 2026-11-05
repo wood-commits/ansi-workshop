@@ -41,6 +41,7 @@ it('speaks real MCP stdio, gates reads/writes by approval, and revokes an existi
     await owner({ action: 'attach' })
     const approved = await owner({ action: 'grant', name: 'Integration test' })
     await client.connect(transport(approved.token!))
+    expect(client.getServerVersion()).toEqual({ name: 'ansi-workshop', version: '0.3.0' })
     await denied.connect(transport(newToken()))
     expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(['draw_cells', 'read_region'])
     expect((await denied.callTool({ name: 'read_region', arguments: { x: 0, y: 0, width: 1, height: 1 } })).isError).toBe(true)

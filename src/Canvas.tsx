@@ -143,15 +143,16 @@ interface CanvasProps {
 }
 
 export interface PointerInput {
-  clientX: number; altKey: boolean; half: 0 | 1
+  clientX: number; altKey: boolean; shiftKey: boolean; half: 0 | 1
   subcell: Point
   tolerance: Point
 }
 
 function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
-  top, rows, columns, cellWidth, gutter, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onDoublePoint, onEnd, onScroll, onKey,
+  top, rows, columns, cellWidth, gutter, selecting, navigating, primitive, pathEditing, halfBlock, singleClick, onNavigate, onPoint, onDoublePoint, onEnd, onScroll, onKey,
 }: Pick<CanvasProps, 'top' | 'selecting' | 'onPoint' | 'onDoublePoint' | 'onScroll' | 'onKey'> & {
   primitive?: boolean
+  pathEditing?: boolean
   halfBlock?: boolean
   singleClick?: boolean
   navigating?: boolean
@@ -164,7 +165,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
 }) {
   const [dragging, setDragging] = useState(false)
   const dragPointer = useRef<{
-    clientX: number; clientY: number; pointerId: number; altKey: boolean; half: 0 | 1
+    clientX: number; clientY: number; pointerId: number; altKey: boolean; shiftKey: boolean; half: 0 | 1
     start: Point; point: Point; moved: boolean
   } | undefined>(undefined)
   const bounds = () => {
@@ -239,14 +240,25 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
     }
   }, [dragging, selecting])
 
+  const updateShift = (shiftKey: boolean) => {
+    const position = dragPointer.current
+    if (!pathEditing || !position || position.shiftKey === shiftKey) return
+    position.shiftKey = shiftKey
+    updatePointer()
+  }
   return {
-    onKeyDown(event: React.KeyboardEvent<HTMLCanvasElement>) { if (event.key === 'Escape') finish(true); onKey(event) },
+    onKeyDown(event: React.KeyboardEvent<HTMLCanvasElement>) {
+      if (event.key === 'Escape') finish(true)
+      if (event.key === 'Shift') updateShift(true)
+      onKey(event)
+    },
+    onKeyUp(event: React.KeyboardEvent<HTMLCanvasElement>) { if (event.key === 'Shift') updateShift(false) },
     onDoubleClick(event: React.MouseEvent<HTMLCanvasElement>) {
       if (!onDoublePoint || event.button !== 0 || event.altKey || navigating) return
       const hit = pointAt(event, true)
       if (!hit) return
       event.preventDefault()
-      onDoublePoint(hit.point, { clientX: event.clientX, altKey: false, half: hit.half, subcell: hit.subcell, tolerance: hit.tolerance })
+      onDoublePoint(hit.point, { clientX: event.clientX, altKey: false, shiftKey: event.shiftKey, half: hit.half, subcell: hit.subcell, tolerance: hit.tolerance })
     },
     onBlur: () => finish(true),
     onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -254,7 +266,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
       const hit = pointAt(event, true)
       if (!hit) return
       const { point, half } = hit
-      const pointer = { clientX: event.clientX, altKey: event.altKey, half, subcell: hit.subcell, tolerance: hit.tolerance }
+      const pointer = { clientX: event.clientX, altKey: event.altKey, shiftKey: event.shiftKey, half, subcell: hit.subcell, tolerance: hit.tolerance }
       event.currentTarget.focus({ preventScroll: true })
       if (onNavigate && (navigating || event.altKey)) {
         event.preventDefault()
@@ -268,7 +280,7 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
       }
       event.currentTarget.setPointerCapture(event.pointerId)
       dragPointer.current = {
-        clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, altKey: event.altKey, half,
+        clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, altKey: event.altKey, shiftKey: event.shiftKey, half,
         start: point, point, moved: false,
       }
       setDragging(true)
@@ -280,13 +292,15 @@ function useCanvasPointer(canvas: RefObject<HTMLCanvasElement | null>, {
       position.clientX = event.clientX
       position.clientY = event.clientY
       position.altKey = event.altKey
+      position.shiftKey = event.shiftKey
       updatePointer()
     },
     onPointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
       const position = dragPointer.current
       if (!position || event.pointerId !== position.pointerId) return
-      if ((primitive || halfBlock) && (position.clientX !== event.clientX || position.clientY !== event.clientY)) {
-        position.clientX = event.clientX; position.clientY = event.clientY; position.altKey = event.altKey
+      if ((primitive || halfBlock) && (position.clientX !== event.clientX || position.clientY !== event.clientY ||
+          (pathEditing && position.shiftKey !== event.shiftKey))) {
+        position.clientX = event.clientX; position.clientY = event.clientY; position.altKey = event.altKey; position.shiftKey = event.shiftKey
         updatePointer()
       }
       finish()
@@ -507,7 +521,7 @@ export function ArtCanvas({ editor, tool, revision, cursor, top, selection, sele
   const [scrollbarHeight, setScrollbarHeight] = useState(0)
   const { width: cellWidth, height: cellHeight } = cellSize
   const pointerHandlers = useCanvasPointer(canvas, {
-    top, rows, columns: editor.width, cellWidth, gutter: GUTTER, selecting, navigating, primitive, halfBlock, singleClick, onNavigate, onPoint, onDoublePoint,
+    top, rows, columns: editor.width, cellWidth, gutter: GUTTER, selecting, navigating, primitive, pathEditing: tool === 'path', halfBlock, singleClick, onNavigate, onPoint, onDoublePoint,
     onEnd: (_point, _moved, canceled) => onEnd(canceled), onScroll, onKey,
   })
   const resizeRows = useEffectEvent((next: number) => {

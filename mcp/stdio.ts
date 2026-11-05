@@ -7,7 +7,7 @@ if (!token || !/^[a-f0-9]{64}$/.test(token)) {
   console.error('Set ANSI_WORKSHOP_AGENT_TOKEN to an agent token issued by the editor owner. Never use the owner key.')
   process.exitCode = 1
 } else {
-  const server = new McpServer({ name: 'ansi-workshop', version: '0.1.0' })
+  const server = new McpServer({ name: 'ansi-workshop', version: '0.3.0' })
   const call = async (command: AgentCommand) => {
     try {
       const response = await fetch(`${BROKER_URL}/agent`, {

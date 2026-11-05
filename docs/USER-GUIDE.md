@@ -87,7 +87,7 @@ Panels may wrap or require page scrolling in a smaller window.
    the cursor; it does not insert or shift existing text.
 4. Choose **Draw**, select the **F4** tile in **Blocks & shading**, and choose
    **Foreground Light green**. Drag a horizontal stroke below the text.
-   Clicking the F4 tile selects a brush; pressing F4 while the canvas is focused
+   Clicking the F4 tile selects a brush; pressing F4 outside form fields or dialogs
    places a character immediately.
 5. Try **Ctrl+Z** to undo the stroke and **Ctrl+Shift+Z** to restore it.
 6. Choose **File > Save As** and save an `.ans` file. Read
@@ -106,6 +106,8 @@ The **Character set** selector changes the F-key mappings. **Single lines**,
 **Double lines**, and **Mixed lines** are useful for boxes and borders.
 **All characters** offers every supported byte from 32 through 255, including
 ASCII letters, shading, box lines, and extended CP437 symbols.
+The selected character tile has a highlighted border/background, while its glyph
+keeps the same neutral color as the other tiles.
 
 The default **Blocks & shading** palette uses:
 
@@ -166,7 +168,7 @@ light or dark art. The typing cursor and VGA preview navigation are unchanged.
 | Erase | Click or drag to restore default blank cells. |
 | Recolor | Drag over existing art to change both colors while keeping its characters. Default blank cells are skipped. |
 | Select | Drag a rectangular block for copy, cut, paste, flip, or delete. |
-| Move | Drag a painted cell to move its side-connected shape, regardless of glyph or color. |
+| Move | Drag the active selection, including blanks; without a selection, drag a painted cell to move its side-connected shape. |
 | Primitive | Drag a rectangle, ellipse, rounded rectangle, or star, filled or outlined. |
 | Path | Build an editable Bezier outline, then Finish to fill it or subtract it from existing art. |
 | Gradient | Drag a linear or radial gradient across a matching shape or enclosed blank area. |
@@ -281,7 +283,23 @@ only the current node/handle drag; the rest of the draft remains editable.
 Typing, F-keys and block edits pause while a draft exists. Undo/redo works for
 node additions, deletion, conversion, handle locking, drags and closure. Tab still
 reaches controls; ordinary keyboard editing resumes after Finish or Cancel.
+It also resumes when deletion or undo leaves the draft empty. Its draft history
+can still be undone/redone until you make a new artwork edit; after that, Undo
+targets the new artwork rather than old path nodes.
 New/Open asks before discarding a draft, and reload warns about it.
+
+Hold **Shift** while adding nodes for horizontal or vertical straight segments
+from the last node. The nearest axis is chosen using VGA's 1:2 proportions
+(ties choose horizontal). Earlier curves are preserved; only the new segment's
+joining handles are collapsed, unlocking that join if necessary.
+Shift also constrains node movement to one axis from its original position,
+and handle movement to an axis through its anchor; locked opposite handles
+remain collinear with their existing lengths. Pressing/releasing Shift during
+a drag updates the preview, even without moving the pointer.
+Shift-clicking the first node closes an aligned segment. If closure would be
+diagonal, it adds an orthogonal corner instead; click the first node again to
+close. **Close path** and **Finish** retain their ordinary automatic closure.
+Whole-path dragging is unchanged.
 
 #### Delete or convert nodes
 
@@ -301,6 +319,8 @@ All these changes remain draft-only and individually undoable, including on
 closed paths. Finish commits only the final block result to document history.
 After undoing Finish, further Undo steps walk back the draft edits. Cancel
 discards draft history without disturbing the document's redo stack.
+Deleting or undoing all nodes and then placing F-key blocks or typing starts a
+new document-history branch and discards the empty draft's old undo/redo.
 
 Fill uses the current FG/BG, not the brush glyph. Paths are sampled in VGA's
 1:2 proportions and fitted to full, upper/lower and left/right half blocks.
@@ -398,7 +418,8 @@ Dragging does not fill additional regions.
 
 ![Fill enclosed blank area selected, with a Light green interior inside the cyan rectangular outline and a confirmation in the status bar](./images/fill-enclosed.png)
 
-1. Choose **Fill**, then **Mode > Fill enclosed blank area**.
+1. Choose **Fill**. **Fill enclosed blank area** is its initial mode; select it
+   again if you previously changed modes. Mode changes last for this session.
 2. Choose **Foreground Light green**.
 3. Click the blank interior of the outlined rectangle at column 17, row 22.
 4. The interior becomes solid green full blocks. The cyan border, gradients,
@@ -463,9 +484,15 @@ Clicking a default blank picks **Light gray / Black**. **Alt+click** only
 positions the cursor, even with Eyedropper active. Clicking the VGA preview
 also positions the cursor rather than sampling; sample on the main canvas.
 
-### Move a shape
+### Move a selection or shape
 
-**Move** follows all side-connected painted cells, including colored spaces;
+With a selection active, choose **Move** and drag to move the whole rectangle,
+including disconnected cells and blank spaces. Blank spaces erase destination
+art, like opaque block paste. Its blank margins also stay inside the document
+boundaries, and the rectangle remains selected at its new position. Release
+places it in one undo step; Undo restores the original and overwritten art.
+
+Without a selection, **Move** follows all side-connected painted cells, including colored spaces;
 diagonal-only contact does not connect shapes. It ignores glyph/color differences.
 The preview stops at the canvas boundaries instead of clipping the shape.
 Release to place it, or Escape to cancel. Only the shape's destination cells
@@ -491,6 +518,14 @@ With a selection active, use **Flip X (mirror horizontally)** or
 **Flip Y (mirror vertically)**. Recognized directional characters are mirrored
 along with their positions. **Delete block** clears the rectangle;
 **Deselect** leaves the art unchanged.
+
+To keep the original and add a reflected copy, choose **Edit > Mirror**, then
+**Above**, **Below**, **Left**, or **Right**. The copy sits directly beside the
+selected rectangle and reflects directional glyphs too. It includes blank cells,
+which erase destination art. Copies clip to the available space at document
+edges; if no space remains, the command reports an error without changing art.
+The original stays selected. One Undo removes the copy and restores anything
+it overwrote. Flip X/Y instead reflect the selected block in place.
 
 To select beyond the visible rows, keep dragging above or below the canvas.
 The view scrolls automatically; moving farther outside scrolls faster.
@@ -551,18 +586,21 @@ and agent credentials remain memory-only.
 
 ## Keyboard reference
 
-**Focus the canvas or VGA preview first.** Click with Cursor or Alt+click if
-you do not want to paint. Shortcuts do not take over normal typing in form
-fields, select controls, or dialogs. On macOS, **Cmd** can replace **Ctrl**.
+**No canvas refocus is needed after palette, toolbar, or menu clicks.**
+Click with Cursor or Alt+click to reposition without painting. Shortcuts do not
+take over normal typing in form fields, select controls, dialogs, or scrollbars,
+or Enter/Space activation on buttons and menu headings. Ctrl+arrow color cycling
+still requires canvas or VGA preview focus. On macOS, **Cmd** can replace **Ctrl**.
 
 | Shortcut | Action |
 | --- | --- |
-| Arrow keys | Move one cell |
+| Arrow keys | Move one cell; Left/Right wrap between first and last columns on the same row |
 | Home / End | Move to column 1 / 80 on the current row |
 | Page Up / Page Down | Move the cursor by a visible page |
 | Enter | Move to column 1 on the next row |
-| Printable CP437 text | Write at the cursor and advance |
-| F1-F12 | Place the mapped palette character and advance |
+| Insert | Toggle keyboard insert (INS) / overwrite (OVR) mode |
+| Printable CP437 text | Write and advance, staying at the last column |
+| F1-F12 | Place the mapped palette character and advance, staying at the last column |
 | Backspace | Move left and erase; does not join lines |
 | Delete | Erase at the cursor |
 | Backspace / Delete with a selection | Clear the selected block |
@@ -578,6 +616,16 @@ fields, select controls, or dialogs. On macOS, **Cmd** can replace **Ctrl**.
 | Ctrl+S | Save |
 | Ctrl+Shift+S | Save As |
 | Escape | Deselect and return to Draw; cancel a shape/gradient/move preview |
+
+Overwrite is the default. In **INS** mode, typing or pressing an assigned F-key
+inserts before the existing cursor cell, shifting the rest of that row right
+and advancing the cursor. Colors, colored spaces and blank gaps are preserved.
+If the last column contains artwork, insertion is refused with a visible error;
+the row, cursor and undo history stay unchanged. Clear the last column or press
+Insert to return to overwrite mode. Each successful insertion is one undo step.
+Mouse drawing, paste, Backspace and Delete are unchanged. The status bar shows
+INS/OVR; this mode stays active across tool switches and New/Open for the session,
+but reload starts in OVR and the mode is not stored in Settings.
 
 Undo/redo also works from tool buttons and menus, except when a form control or
 dialog needs native keyboard behavior. During primitive, gradient, and move

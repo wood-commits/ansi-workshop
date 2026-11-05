@@ -60,7 +60,7 @@ history, dirty state or exports.
 | `src/path.ts` | Local-coordinate cubic Bezier flattening, even-odd pixel coverage and sparse block-fit fill/subtraction |
 | `src/gradient.ts` | Aspect-correct linear/radial shading and ordered dithering |
 | `src/fill.ts` | Shared sparse painted-region matching, shape recoloring, enclosed blank-area discovery and filling |
-| `src/move.ts` | All-color connected shape discovery and sparse, edge-clamped move overlays |
+| `src/move.ts` | All-color connected shape discovery and sparse, edge-clamped shape/selection move overlays |
 | `src/export.ts` | Bounded binary ANSI/ASCII chunk generators, DOS-to-ANSI color conversion, shared sparse row ordering |
 | `src/ansimation.ts` | Bounded 80x25 snapshots, deterministic CP437 transitions, delta ANSI stream and byte-rate playback |
 | `src/AnsimationPanel.tsx` | Experimental modal controls, read-only second art, VGA rendering and separate animation-copy export |
@@ -123,6 +123,14 @@ index, preserving default blank omission and color equality in existing tools.
 RGB validation is explicitly enabled only for Tundra editors and their
 fill/gradient calls. Classic ANSI export and animation still reject RGB cells.
 Paste validates all source colors before clearing any destination cells.
+`Editor.mirror` copies the selected sparse block and reflects its positions and
+directional glyphs into an adjacent Above/Below/Left/Right rectangle without
+changing the source. Destination bounds clip to the document columns, row zero,
+and MAX_ROW; below-edge cell offsets are checked before arithmetic to avoid
+unsafe intermediate coordinates. A fully clipped copy fails before writes.
+The clipped sparse block uses the existing opaque paste operation, so blank
+cells clear destination art without allocating the rectangle. App commits one
+transaction and keeps the original selection; undo restores overwritten art.
 
 The Editor owns a mutable map; React holds the Editor instance and synchronously
 increments a ref-backed revision counter, mirroring it into state to redraw.
@@ -133,6 +141,13 @@ snapshots or a redesigned ownership boundary, not mutate it concurrently.
 
 `paint` records the first before-value and latest after-value in a pending
 transaction. `commit` drops net-zero changes and assigns a unique state ID.
+`Editor.insert` validates the new cell/coordinate and checks the row's last
+column before any writes. A stored last-column cell, including a colored space,
+fails explicitly rather than being discarded. It snapshots only stored cells
+at or after the insertion column on that row, clears their old positions, shifts
+them right through `paint`, and writes the inserted cell. Blank gaps remain
+sparse, inks/glyphs are preserved, and the caller commits the entire insertion
+as one transaction. Rows are never joined or wrapped.
 Undo/redo replays patches, preserving before/after state IDs. Saved identity
 uses the captured state ID, not stack depth, so branching and editing during
 async saving do not accidentally clear the modified flag. Undo history is
@@ -295,6 +310,14 @@ The Path tool holds a separate local-coordinate Bezier draft in App, with a
 safe-integer origin row and fractional node/incoming/outgoing points. Closing
 adds the closing cubic segment but leaves nodes and independent handles editable.
 Click-drag creates mirrored handles; moving an anchor translates both handles.
+Shift constraints operate on local coordinates in VGA 1:2 proportions, with
+horizontal ties. New segments collapse only their joining controls, preserving
+the earlier incoming curve and unlinking the join. New-node gestures rebuild
+from their immutable pre-gesture snapshot so releasing Shift restores free
+geometry. Node translations constrain the drag delta; handle targets constrain
+about the anchor and retain linked opposite-handle behavior. Pointer transport
+includes Shift on down/move/release and updates active previews on Shift key
+changes. Shift closure adds a corner instead of a diagonal closing segment.
 Selected nodes are highlighted and available through a node selector. Deletion
 preserves closure with at least three remaining anchors; fewer anchors reopen
 the draft, and deleting the last clears it. Corner conversion collapses both
@@ -317,6 +340,12 @@ its local history; canceling preserves document redo. No-op finishes can also
 restore their draft without undoing unrelated artwork. New/Open clears these
 session-only histories. Saved identity still belongs solely to Editor cells
 and metadata; drafts remain excluded from exports.
+An empty draft can retain local undo/redo after node deletion or undo. App's
+revision refresh tracks the Editor version and clears those residual draft
+stacks on the next actual document transaction while no draft exists. This
+applies to keyboard, pointer, block, metadata, and agent writes; net-zero
+operations do not discard history. New edits therefore cannot be undone/redone
+as old path nodes, while untouched empty drafts retain their local history.
 Agent commands and block writes pause while a draft exists.
 
 `path.ts` adaptively subdivides cubics in 1:2 VGA proportions with a 1/32-column
@@ -363,6 +392,8 @@ pointer position and commits one transaction; zero-length and canceled
 gestures leave history unchanged. Cancellation, keyboard/wheel suppression,
 agent exclusion, and document replacement follow the primitive lifecycle.
 
+Fill initially selects enclosed-blank-area mode; explicit mode changes remain
+in memory across tool switches and New/Open, without becoming Settings.
 Fill and Gradient share `paintedRegion`, `enclosedBlankRegion`, and `filledBlank`
 from `fill.ts`. `gradientRegion` selects discovery from the starting cell, while
 the drag captures whether the target is enclosed for rasterization.
@@ -393,10 +424,16 @@ default cell, and changes only the FG/BG brush state, not the glyph, document,
 revision, saved identity, or history. Alt+click remains cursor-only. Preview
 gestures retain their existing selection/navigation semantics.
 
-Move reuses `paintedRegion` with color/glyph matching disabled to snapshot
+With an active selection, Move uses `moveSelection`: a sparse scan clears stored
+cells in the source and destination rectangles, then overlays translated source
+cells. Thus selected blanks overwrite destination art without allocating the
+rectangle. The complete rectangle, including blank margins, clamps at document
+edges and MAX_ROW. Both canvases preview its translated marquee without changing
+the original selection or model; release updates the selection endpoints.
+Without a selection, Move reuses `paintedRegion` with color/glyph matching disabled to snapshot
 four-connected stored art, including colored spaces. Discovery never traverses
 missing cells. `moveShape` validates safe offsets/region coordinates, clamps
-the translation to keep the entire shape within columns 0-79 and rows
+the translation to keep the entire shape within the document's columns and rows
 0-MAX_ROW, and returns a sparse overlay: source cells are `EMPTY`, then
 translated cells overwrite them. Clearing sources before writing destinations
 handles self-overlap; holes never clear unrelated art. Both renderers use
@@ -405,7 +442,8 @@ restoring overwritten art on Undo. Net-zero gestures preserve saved identity
 and redo. Final-release coordinates, cancellation, keyboard/wheel suppression,
 agent exclusion, and document replacement use the primitive/gradient lifecycle.
 Preview gestures remain navigation/selection only. Memory/work scale with
-connected cells, never the shape's bounding rectangle or its absolute row.
+connected cells for shape moves or stored art for selection moves, never the
+bounding rectangle's area or its absolute row.
 
 Navigation uses a row offset rather than an enormous native scroll element.
 The bounded vertical scrollbar sits outside the horizontal scroll host, so
@@ -419,6 +457,17 @@ page and focused arrow/Page/Home/End keys navigate without editing. Live shape
 placement disables it like wheel scrolling.
 Wheel/page/scrollbar controls move the viewport without forcing cursor movement.
 Arrow navigation brings the cursor into view. Go to row changes both.
+Horizontal arrows wrap between column zero and the document's last column
+without changing rows, including Shift+arrow selection endpoints. Typing and
+F-key placement advance one column but stay at the right edge; Enter explicitly
+starts the next row. Backspace still clamps at column zero without joining rows.
+Plain Insert toggles a session-only keyboard insert flag, initially off, with
+an INS/OVR status indicator. Typing and assigned F-keys share `place`, which
+selects `Editor.insert` or `paint`; failures are logged/shown without cursor
+advancement or a commit. Pointer tools, paste and erasure do not use the flag.
+It survives New/Open but is never persisted. Form controls/dialogs and active
+draft/placement keyboard guards remain unchanged; modified Insert keeps native
+behavior, and key auto-repeat does not repeatedly toggle the flag.
 This avoids native canvas-size and DOM-scroll-height limits.
 Each surface caches just its viewport art and selection in a detached
 canvas. Cursor-only movement composites that raster without rereading cells or
@@ -431,6 +480,16 @@ backward/forward within each palette. These canvas-only commands do not move
 the cursor, select cells, edit existing art, or enter undo history.
 Blocks & shading maps F1-F10 to CP437 176, 177, 178, 219, 223, 220, 221, 222,
 254, 250; F11/F12 are unassigned and do not advance the cursor.
+Function-palette glyphs keep the same neutral ink whether selected or not;
+only the selected button's border/background highlight changes.
+
+Canvas events retain their pointer-cancellation handling and dispatch locally.
+A cleaned-up document keydown listener dispatches the same editing commands from
+palette/toolbar controls, menu headings, and page background without requiring
+canvas focus. It skips canvas events to avoid duplicate edits, form fields,
+editable content, dialogs, and scrollbars. Enter/Space on buttons, summaries,
+links, and tabs retain activation behavior; composing and previously handled
+events are ignored. Ctrl/Cmd+arrows remain canvas-only.
 
 Undo/redo shortcuts bubble to the app shell so Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z,
 and Ctrl/Cmd+Y work from either canvas, toolbar buttons, and menu headings.
@@ -446,6 +505,9 @@ Idle hover never opens a menu. Choosing
 an enabled command or pressing Escape closes it and restores heading focus.
 Outside pointer/focus events also dismiss it; event listeners are removed on
 unmount.
+Edit's controlled Mirror disclosure expands four direction commands within
+the block options; it closes with the parent menu and is disabled without a
+selection or while a path draft exists.
 
 The toolbar keeps drawing tools, history, and row navigation separate from
 an always-present tool-options row. Tool-specific controls and hints occupy that
